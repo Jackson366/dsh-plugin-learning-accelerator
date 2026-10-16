@@ -275,7 +275,70 @@ dsh --profile learning-test --port 3099 --no-open
 | 返回真实状态与解析路径 | ✅ `"path": ".../.learning/state.json"`, `"source": "process-cwd"` |
 | 伪造 Host 被拒 | ✅ `Host: evil.example.com` → `403 forbidden` |
 | 客户端包被 host 扫描进 boot graph | ✅ `__DSH_BOOT__` 中出现 `dsh-plugin-learning-accelerator/client.js` 及其 rev |
-| bundle 路由 | ⚠️ 该运行时对所有插件的 `/plugins/<id>/client.js` 都返回 404（含官方包），说明这条路由的挂载方式与源码 checkout 的文档描述不同，与本插件无关；graph row 与 rev 已正确生成 |
+| bundle 路由 | ⚠️ 该运行时对所有插件的 `/plugins/<id>/client.js` 都返回 404（含官方包）；v0.2.0 的复查把这条收窄了，见第 4.5 节 |
+
+### 4.5 v0.2.0 复验（同一打包运行时 0.2.0-rc.2）
+
+补齐教学协议之后重跑了一次真机验证，并且这次把"注入是否真的到达模型"也测了。使用的 CLI 是打包
+运行时自带的那一个，不是源码 checkout：
+
+```sh
+DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"   # 0.2.0-rc.2
+"$DSH" --profile la-web --from-default-profile web --dump-config     # 建临时 profile（不碰 desktop）
+"$DSH" plugin --profile la-web add /Users/jackson/Desktop/project/github/dsh-plugin-learning-accelerator
+cd /tmp/la-e2e-project && "$DSH" --profile la-web --port 3099 --no-open
+```
+
+先在一个临时项目里用**内核自己**写出一份真实状态（技术领域、前端背景、一个薄弱概念、一条到期复习、
+一个任务、一条难度证据），再逐项验证：
+
+| 检查项 | 结果 |
+|---|---|
+| 路由与头 | ✅ `200`、`content-type: application/json; charset=utf-8`、`cache-control: no-store` |
+| 真实状态回传 | ✅ `path=/private/tmp/la-e2e-project/.learning/state.json`、`topic=Cordis 插件生命周期`、`weak=[Cordis waterfall 语义]`、`mastered=[插件 apply 函数]`、`due=1` 且带出回述题 |
+| 伪造 `Host` | ✅ `403` |
+| 远端 `Origin` | ✅ `403` |
+| `POST` | ✅ `405` |
+| `HEAD` | ✅ `200` |
+| loopback 直连、不带 token | ✅ `200`（有意为之：能读本地文件的进程本来就能读那份 JSON） |
+
+**解析来源四级都在真机上跑过**（各自用 `--patch` 覆盖一层配置）：
+
+| 配置 | `payload.source` | 解析到的路径 |
+|---|---|---|
+| 无（进程 cwd 就是项目） | `process-cwd` | 项目里的 `state.json` |
+| `config.root` | `config-root` | 被钉住的项目 |
+| `config.scope: user` | `user-scope` | `~/.learning-accelerator/state.json`（未被创建，读路径不写盘） |
+| `config.stateFile` | `argument` | 指定文件 |
+
+**注入是否真的到达模型**——用 `headless` profile（同样装了本插件）加 `--json` 看运行事件，三轮都
+在临时项目里跑，且要求模型**不要调用任何工具**：
+
+| 目标 | 证据 |
+|---|---|
+| 状态块进入系统提示 | 模型自己的 thinking：*"The learning state is in the system context: current topic Cordis 插件生命周期, weak point Cordis waterfall 语义, difficulty 1"*，并在一句话里答对这三项；`inputTokens=10842` |
+| 协议块进入系统提示 | 问"每轮收尾要生成哪四样、有哪些本轮模式、连续两个同向信号会怎样"，模型 thinking 明说 *"All three are in the context (教学协议)"*，并答出四样收尾产物、七个模式 id、以及"连续两个同向才移动一档（1-5）"加八个信号名与 `evidence` 动作 |
+| 门禁：没有学习线就沉默 | 在没有 `state.json` 的目录里问同一件事，模型答 *"没有学习状态"* |
+| 会话 cwd 参与解析 | 事件流首行 `{"type":"session","cwd":"/private/tmp/la-e2e-project"}` |
+| 只读轮不写盘 | 三轮之后 `review_history=0`、`next_review_items=1`、难度证据 `=1`、`attempt_records=0`——与种子文件完全一致 |
+| 无 HTTP carrier 的组合仍可用 | `headless` profile 里没有 webServer，工具与两个注入块照常工作（面板路由的 fiber 停在 PENDING，正是设计预期） |
+
+**客户端半边这次也复查了，结论比第 4 部分更窄也更准**：boot graph 里确实有本包的行与 rev
+（`dsh-plugin-learning-accelerator/client.js&rev=b532120ea95c`，且出现在一个 combo 分组行里），但
+`/plugins/<id>/client.js` 的四种写法（单文件、`?rev=`、`&rev=`、带 token）以及页面实际使用的
+`/plugins/??a/client.js,b/client.js` combo 形式**全部 404**，而且官方包
+（`@deepseek-ai/dsh-client-ui-cartoon`、`@deepseek-ai/dsh-client-ui-deliverables`）走同一路径也是
+404。所以这是**运行时级的资产路由缺失**，与本插件无关，但也意味着**浏览器半边在本机无法做真实渲染
+验证**：tab 与侧边栏角标在这个运行时里不会被加载，只能靠 `tests/client-plugin.test.js`（用带真实
+重渲染语义的 React stand-in 断言双语文案）保证。
+
+还**没有**在真机上验证的一项：面板"跟随会话"那条分支需要 web 进程内先跑过一轮对话（`storeFor` 才会
+记下会话路径），这需要一个 LLM 轮次；本次只验证了同一条解析链的另外三档（`process-cwd` /
+`config-root` / `user-scope` / `argument`）。接线本身由 `tests/host-plugin.test.js` 里那两条走完
+`apply` → 真实路由 handler 的回归测试覆盖。
+
+验证用的临时 profile、session 记录与 `/tmp` 现场都已删除；当前 GUI（19387）未被触碰。
+
 
 单元测试 74 项全绿（v0.2.0，补齐教学协议之后）：
 
@@ -307,12 +370,12 @@ node --test tests/
 **不满足**本包 `>=0.1.0-rc.5` 的 peer 范围；要装 `next`（`0.2.0-rc.2`）或 `alpha`。CI 因此把版本钉死，
 而不是浮在标签上。
 
-本轮未重跑桌面端（0.2.0-rc.2 独立 profile）的端到端验证，所以第 4 部分上半部分的记录仍是 v0.1.0 的
-运行时结果。但其中一行现在需要修正：那条记录里的 `"source": "process-cwd"` 当时被当作正常输出，
-v0.2.0 查明它是一个**接线 bug**——面板的"跟随学习者"分支在默认配置下根本不可达，因为 `apply` 总把
-带默认值的 `scope` 传给路由，而 `panelRequest` 把任何显式 scope 都当成"停止跟随"。修法与回归测试见
-`docs/architecture.md` 第七节；`docs/analysis.md` 保留这条旧记录，是因为它恰好是"单测全绿但真实挂载
-走错分支"的现场证据。
+真机验证已经在 4.5 节补跑（同一打包运行时 0.2.0-rc.2，含面板四级解析来源与两轮"注入是否到达模型"的
+证明）。第 4 部分上半部分那行旧记录仍然保留，并且**现在能确定它是 bug 现场**：那里的
+`"source": "process-cwd"` 当时被当作正常输出，v0.2.0 查明面板的"跟随学习者"分支在默认配置下根本
+不可达——因为 `apply` 总把带默认值的 `scope` 传给路由，而 `panelRequest` 把任何显式 scope 都当成
+"停止跟随"。修法与回归测试见 `docs/architecture.md` 第七节；4.5 节里 `process-cwd` 再次出现是另一回事
+（那次进程 cwd 恰好就是项目目录，属于文档化的正常兜底）。
 
 ---
 
