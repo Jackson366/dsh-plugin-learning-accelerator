@@ -1,0 +1,7 @@
+# Peer dependencies linked for local development only.
+# `dsh plugin add` installs the real peers into the profile, so they are never
+# part of what this package ships.
+node_modules/
+
+# Local learning state, if a test ever writes one here.
+.learning/
