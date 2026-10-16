@@ -241,6 +241,10 @@ review_result = "correct" if result == "pass" else "incorrect"
 | 学习状态是本插件的核心资产，读写必须无歧义 | 用纯 JS 移植 `state.py`，并用测试**逐字节**比对 Python 产物；两边可互相读写同一文件 |
 | 状态文件的归属必须唯一，否则学习进度会静默走失 | 单一优先级链（`state_file` → session cwd → 配置 root → 进程 cwd），集中在 `lib/scope.js`，单独单测 |
 | Prompt 注入能让模型"零成本"知道该复习什么 | 用 `systemPrompt.context` 而不是静态 section（每轮重新求值）；**只在状态文件已存在且非空时注入**，无关会话一个 token 都不花 |
+| 上游的*方法*（`SKILL.md` / `SYSTEM_PROMPT.md` / `references/learning_os_protocol.md`）只以"请 agent 去读"的形式存在，而这门插件已经拥有了*状态*——只有状态没有方法，等于一个复习调度器 | 把三份 markdown 移植成 `lib/protocol.js`（纯数据 + 纯函数），作为**第二个**注入块 `learning-accelerator/protocol`（order 比状态块小 1，先方法后状态），与状态块共用同一门禁 |
+| 一条全新学习线的第一轮还没有 state 文件，两个注入块都静默，方法会缺席最关键的那一轮 | `learning_session` / `learning_domain` 的返回值带 `teaching_protocol` 并渲染进模型可见文案：第一轮由工具带回，第二轮起由注入块承担 |
+| 上游把"不要默认对方懂前端"写成纪律，但执行它靠模型的自觉 | 画像适配改成按档案数据分派（`profileTrack()`）：`no_programming` 优先于一切，只有明确写了前端/JS/TS/React/Node 才给前端对照表，未知背景两者都不给 |
+| 提示词里的协议越长，每轮成本越高，且会随上游文档更新而漂移 | 注入版只保留"怎么教"的必需项，长度由测试卡在 6000 字符以内；状态 schema 不复述，交给内核与 `schemas/` |
 | 工具返回值是程序 API，正文是给人看的 | 五个工具都返回结构化 JSON；解释性文案全部放在 `output.render` |
 | 写入路径越多，越容易写出不一致的状态 | `learning_record` 是唯一写入工具，`action` 枚举分派；每次返回"改了什么"而不是"成功" |
 | 读路径不该因为文件被手改坏就毁掉一整轮 | 读工具捕获解析错误，返回 `{ ok: false, error }` 让面板和模型都能解释并修复 |
@@ -273,11 +277,58 @@ dsh --profile learning-test --port 3099 --no-open
 | 客户端包被 host 扫描进 boot graph | ✅ `__DSH_BOOT__` 中出现 `dsh-plugin-learning-accelerator/client.js` 及其 rev |
 | bundle 路由 | ⚠️ 该运行时对所有插件的 `/plugins/<id>/client.js` 都返回 404（含官方包），说明这条路由的挂载方式与源码 checkout 的文档描述不同，与本插件无关；graph row 与 rev 已正确生成 |
 
-单元测试 40 项全绿：
+单元测试 74 项全绿（v0.2.0，补齐教学协议之后）：
 
 ```sh
 cd ~/Desktop/project/github/dsh-plugin-learning-accelerator && node --test tests/
-# tests 40  pass 40  fail 0
+# tests 74  pass 74  fail 0
 ```
 
-其中包括"JS 状态内核与 Python 产物逐字节一致"与"插件卸载后工具与提示词上下文全部撤销"两项关键回归。
+其中包括"JS 状态内核与 Python 产物逐字节一致"与"插件卸载后工具与两个提示词上下文全部撤销"两项关键回归。
+
+### 补充：在"只有已发布依赖"的环境里复现
+
+第 4 部分的真机验证用的是本机 checkout 的 peer 软链。v0.2.0 额外验证了 CI 路径——不依赖本地
+`deepseek-harness` checkout，只用 npm 上已发布的 peer 包：
+
+```sh
+# 复刻 .github/workflows/ci.yml 的步骤
+git clone --depth 1 https://github.com/Maolipeng/Learning-Accelerator.git ../Learning-Accelerator
+npm install --no-save --no-package-lock \
+  @deepseek-ai/cordis@^4.0.4 @deepseek-ai/schemastery@^3.18.2 \
+  @deepseek-ai/dsh-tools@0.2.0-rc.2 @deepseek-ai/dsh-system-prompt@0.2.0-rc.2
+node --test tests/
+# tests 74  pass 74  fail 0  skipped 0
+```
+
+注意 `skipped 0`：上游 checkout 就位后，逐字节等价测试是**真的跑了**，而不是静默跳过。
+
+同一路径也确认了一件事：`@deepseek-ai/dsh-tools` 的 npm `latest` 标签是 `0.0.1-rc.1`，
+**不满足**本包 `>=0.1.0-rc.5` 的 peer 范围；要装 `next`（`0.2.0-rc.2`）或 `alpha`。CI 因此把版本钉死，
+而不是浮在标签上。
+
+本轮未重跑桌面端（0.2.0-rc.2 独立 profile）的端到端验证，所以第 4 部分上半部分的记录仍是 v0.1.0 的
+运行时结果。但其中一行现在需要修正：那条记录里的 `"source": "process-cwd"` 当时被当作正常输出，
+v0.2.0 查明它是一个**接线 bug**——面板的"跟随学习者"分支在默认配置下根本不可达，因为 `apply` 总把
+带默认值的 `scope` 传给路由，而 `panelRequest` 把任何显式 scope 都当成"停止跟随"。修法与回归测试见
+`docs/architecture.md` 第七节；`docs/analysis.md` 保留这条旧记录，是因为它恰好是"单测全绿但真实挂载
+走错分支"的现场证据。
+
+---
+
+## 第五部分：与上游的差距，以及有意不对齐的部分
+
+v0.2.0 对齐掉了四类差距：教学协议（`lib/protocol.js` + 第二个注入块 + 工具带回）、机器契约
+（`schemas/learning_state.schema.json`）、工程化（CI、CHANGELOG、版本、LICENSE）、内容资产
+（`docs/` 与 `examples/`）。**以下四项是有意不搬的**，理由要能被将来的维护者反驳，所以写在这里：
+
+| 上游有 | 本插件不做的理由 | 如果将来要做 |
+|---|---|---|
+| Python CLI 的 26 个子命令（`show` / `summary` / `concept-progress` / `exercise-show` / `due` / `dashboard` …） | 这些命令在插件里的消费方是**模型**，而模型已经有五个返回结构化 JSON 的工具；再包一层 CLI 等于给同一份内核加第二个入口，两边都要维护参数校验 | 若使用者（人/脚本）需要命令行，应写成薄薄的 `bin/*.js`，直接调 `LearningStore`，不复制语义 |
+| 终端 dashboard 与交互式 TUI | 本插件已有 Web 面板（`conversation.view` tab + 侧边栏到期角标），而且面板跟随会话所在的 state 文件；终端渲染是同一份 `summary()` 的第三种呈现 | 只有当使用者在无 GUI 环境（纯 ACP/headless）里学习时才值得做，且应复用 `panelPayload()` 形状 |
+| `SKILL.md` / `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `.cursor/rules` / `manifest.json` / `skills.sh.json` | 这些是"让另一种 agent 运行时加载这门 skill"的适配层。本插件是 DSH 原生能力：协议进 prompt、状态进内核，不依赖任何宿主去读 markdown | 若要把协议卖给别的运行时，导出 `lib/protocol.js` 的纯函数即可，不需要维护七份 markdown 副本 |
+| `pyproject.toml` / pytest / 覆盖率门（`fail_under = 80`） | 内核已经是 JS；Python 只作为**等价性对照物**存在，CI 把上游 clone 到旁边跑逐字节比对，而不是让它成为本包的运行依赖 | 若要自测覆盖率，用 `node --test --experimental-test-coverage`，并给同类阈值 |
+
+一处**故意保留的不一致**：`attempt` 的 `partial` 在落盘时仍按 `fail` 处理（与上游 Python 一致，
+以保证逐字节等价），但返回值里额外保留 `outcome: 'partial'`，让模型不丢失表达力。这是"内核忠实、
+集成层补全"的分工，`tests/store-equivalence.test.js` 守着前一半，`tests/host-plugin.test.js` 守着后一半。

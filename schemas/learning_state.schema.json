@@ -1,0 +1,543 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dsh-plugin-learning-accelerator/schemas/learning_state.schema.json",
+  "title": "Learning Accelerator State",
+  "description": "Shape of a persisted Learning-Accelerator state file (`.learning/state.json` by default, `~/.learning-accelerator/state.json` for the user scope). This schema is derived from the upstream Python schema at Learning-Accelerator/schemas/learning_state.schema.json, but the JavaScript kernel in lib/learning-store.js (defaultState / migrate / validate / validateExerciseSpec) is authoritative: every top-level key and every section key listed here is one that defaultState() emits, and every `$defs.required` list is the set of keys the kernel always writes for that record. Divergences from upstream are noted on the affected field and summarized here: (1) AttemptRecord.user_answer is optional because recordAttempt only writes it when the caller supplies one and JSON serialization drops an undefined value; (2) ExerciseSpec.goal may be the empty string, since validateExerciseSpec materializes the key but only rejects an empty `task` or an empty `concepts` list; (3) `required` inside $defs describes kernel output rather than a validation gate, because LearningStore.validate() only enforces the top-level sections, topic_state.level, and difficulty_state.current_difficulty; (4) $defs for DifficultyEvidence, CurrentTask, ExerciseRecord, and CodeErrorRecord are extensions that upstream left as untyped objects; (5) ReviewItem also carries the completed_result/completed_at/notes fields that completeReview() appends when archiving an item into review_history. Every object keeps additionalProperties: true, matching the kernel's deepMerge(), which preserves unknown keys written by other tools or by newer versions.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "learner_profile",
+    "topic_state",
+    "practice_state",
+    "review_state",
+    "difficulty_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Persisted schema version. Must equal the SCHEMA_VERSION export of lib/learning-store.js; LearningStore.validate() rejects any other value."
+    },
+    "learner_profile": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Onboarding answers and constraints. Written by LearningStore#updateProfile(); migrate() back-fills known_skills, learning_domain, target_outcome, and target_project for older files.",
+      "properties": {
+        "learning_domain": {
+          "type": "string",
+          "description": "Learning domain selecting the onboarding template. Known values are the DOMAIN_TEMPLATES keys: general, technology, language, exam, writing, communication. updateProfile() does not validate it, so any string is accepted."
+        },
+        "known_stack": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Technologies or prior experience the learner brought in."
+        },
+        "known_skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Skills the learner already has. migrate() copies known_stack into it when the key is absent; updateProfile() mirrors known_stack into it when only known_stack is supplied."
+        },
+        "preferred_language": {
+          "type": "string",
+          "description": "Language to teach in, such as zh-CN or en. Defaults to zh-CN."
+        },
+        "experience_level": {
+          "type": "string",
+          "enum": ["unknown", "no_programming", "beginner", "intermediate", "advanced"],
+          "description": "Declared or inferred level, mirroring EXPERIENCE_LEVELS. updateProfile() rejects values outside this list."
+        },
+        "learning_goal": {
+          "type": "string",
+          "description": "What the learner wants to achieve, in their own words."
+        },
+        "target_outcome": {
+          "type": "string",
+          "description": "Concrete artifact or result that would prove success. updateProfile() keeps it mirrored with target_project."
+        },
+        "target_project": {
+          "type": "string",
+          "description": "Legacy name for target_outcome; updateProfile() and migrate() keep both keys in sync."
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Constraints such as time budget or forbidden tools. updateProfile() appends one de-duplicated constraint per call."
+        }
+      }
+    },
+    "topic_state": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Current topic, concept lists, and per-concept spaced-repetition progress. Written by setTopic(), recordConcept(), completeReview(), and recordAttempt(); migrate() back-fills concept_progress.",
+      "properties": {
+        "current_topic": {
+          "type": "string",
+          "description": "The single topic this track is on right now."
+        },
+        "level": {
+          "type": "string",
+          "enum": ["beginner", "intermediate", "advanced"],
+          "description": "Difficulty level of the current topic, mirroring TOPIC_LEVELS. LearningStore.validate() rejects values outside this list."
+        },
+        "mastered_concepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Concepts recorded as mastered. recordConcept() and _applyReviewResultToConcepts() keep it disjoint from weak_concepts."
+        },
+        "weak_concepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Concepts recorded as weak. priorityReviews() gives these a ranking bonus."
+        },
+        "concept_progress": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ConceptProgress" },
+          "description": "Per-concept strength, streak, and due date, keyed by concept name. Empty by default; migrate() back-fills an empty object."
+        },
+        "misconceptions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Diagnosed misconceptions. Seeded empty by defaultState() and not written by the kernel itself."
+        },
+        "open_questions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Questions the learner still has open. Seeded empty by defaultState() and not written by the kernel itself."
+        }
+      }
+    },
+    "practice_state": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Exercise specs, attempts, receipts, and queued tasks. Written by addExerciseSpec(), recordAttempt(), addTask(), and recordExercise(); the mistake tool also appends to last_code_errors.",
+      "properties": {
+        "exercise_specs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExerciseSpec" },
+          "description": "Registered exercise specifications, upserted by id via addExerciseSpec()."
+        },
+        "attempt_records": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AttemptRecord" },
+          "description": "Append-only attempt log written by recordAttempt()."
+        },
+        "completed_exercises": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExerciseRecord" },
+          "description": "Exercises recorded with status 'completed', upserted by id via recordExercise()."
+        },
+        "failed_exercises": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExerciseRecord" },
+          "description": "Exercises recorded with status 'failed', upserted by id via recordExercise()."
+        },
+        "current_tasks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CurrentTask" },
+          "description": "Queued next tasks. addTask() writes the record shape, and migrate() converts legacy current_project_tasks strings into it."
+        },
+        "current_project_tasks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Legacy string-only task names, kept in sync with current_tasks by addTask() and migrate()."
+        },
+        "last_code_errors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CodeErrorRecord" },
+          "description": "Recent diagnosed mistakes, trimmed to the last 20. Written by the plugin's mistake tool (lib/tools.js), not by the store kernel; upstream left this as an untyped array."
+        }
+      }
+    },
+    "review_state": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Spaced-repetition queue and archive. addReview() and completeReview() maintain next_review_items and review_history; due_items is a queue slot the kernel reads (via dueReviews/priorityReviews) and migrate() normalizes rather than filling.",
+      "properties": {
+        "due_items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReviewItem" },
+          "description": "Review items that are ready to be asked; treated as due together with next_review_items whose due_at has passed."
+        },
+        "next_review_items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReviewItem" },
+          "description": "Scheduled review items, upserted by id via addReview(), _scheduleReviewInState(), and completeReview()."
+        },
+        "review_history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReviewItem" },
+          "description": "Append-only archive of completed reviews. completeReview() pushes the matched item plus completed_result, completed_at, and (when supplied) notes."
+        }
+      }
+    },
+    "difficulty_state": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Adaptive difficulty calibration. _recordEvidenceInState() appends evidence and re-ranks, keeping at most the last 20 entries.",
+      "properties": {
+        "current_difficulty": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Current difficulty step. LearningStore.validate() rejects non-integers and values outside 1-5."
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DifficultyEvidence" },
+          "description": "Recent difficulty signals, capped at the last 20 by the kernel. Two same-polarity signals in a row move current_difficulty by one step; difficulty_state.evidence is not validated for length, so files written by other implementations may hold more."
+        },
+        "next_adjustment": {
+          "type": "string",
+          "enum": ["easier", "same", "harder"],
+          "description": "Direction implied by the two most recent evidence signals; reads 'same' when they disagree or are unknown."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ConceptProgress": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["concept", "strength", "attempts", "correct_streak", "last_reviewed_at", "next_due_at", "failure_count"],
+      "description": "One topic_state.concept_progress entry, written in full by _updateConceptProgressInState() on every review completion and attempt.",
+      "properties": {
+        "concept": {
+          "type": "string",
+          "description": "The concept this record tracks."
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Recall strength, clamped to 0-1 and rounded to two decimals. Starts at an implicit 0.5 baseline, +0.1 per correct/ pass, +0.2 per second_correct/third_correct, -0.2 per failure."
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of recorded reviews and attempts for this concept."
+        },
+        "correct_streak": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Consecutive correct recalls; reset to 0 by any incorrect or fuzzy result."
+        },
+        "last_reviewed_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) of the most recent update."
+        },
+        "next_due_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) the concept is next due: +1/+3/+7 days by correct_streak, or today after a failure."
+        },
+        "failure_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Consecutive failures; reset to 0 by a correct recall. priorityReviews() adds 3 priority points per failure."
+        }
+      }
+    },
+    "ExerciseSpec": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "topic", "concepts", "difficulty", "goal", "task", "input", "expected_output", "constraints", "evaluation_criteria", "hint", "created_at"],
+      "description": "One practice_state.exercise_specs entry. validateExerciseSpec() materializes every listed key, so all of them are required in kernel-written state; `goal` may be an empty string because only `concepts` (at least one) and a non-empty `task` are rejected.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable 12-hex-character id derived from topic, concepts, difficulty, and task (stableId), or the id supplied by the caller."
+        },
+        "topic": {
+          "type": "string",
+          "description": "Topic the exercise belongs to."
+        },
+        "concepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Concepts the exercise covers; validateExerciseSpec() rejects an empty list."
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["easy", "normal", "stretch"],
+          "description": "Exercise difficulty, mirroring EXERCISE_DIFFICULTIES. validateExerciseSpec() rejects anything else."
+        },
+        "goal": {
+          "type": "string",
+          "description": "What the exercise tests. Defaults to 'Practice <concepts>' in createExerciseSpec(), but validateExerciseSpec() accepts an empty string."
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The learner-facing task; validateExerciseSpec() rejects an empty or whitespace-only value."
+        },
+        "input": {
+          "type": "string",
+          "description": "Optional input material for the exercise; defaults to an empty string."
+        },
+        "expected_output": {
+          "type": "string",
+          "description": "Expected behaviour or artifact; defaults to an empty string."
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Required boundaries for the answer; defaults to an empty list."
+        },
+        "evaluation_criteria": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "How the answer is judged; defaults to an empty list."
+        },
+        "hint": {
+          "type": "string",
+          "description": "One optional hint, hidden until needed; defaults to an empty string."
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) the spec was registered; defaults to today."
+        }
+      }
+    },
+    "AttemptRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "exercise_id", "result", "score", "mistake_type", "feedback", "concepts_to_review", "created_at"],
+      "description": "One practice_state.attempt_records entry, appended by recordAttempt(). Upstream also required user_answer; the kernel only writes that key when the caller supplies one, so it is optional here.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable 12-hex-character id derived from the exercise id, the date, and the attempt count."
+        },
+        "exercise_id": {
+          "type": "string",
+          "description": "Id of the exercise spec this attempt answers; recordAttempt() rejects an unknown id."
+        },
+        "user_answer": {
+          "type": "string",
+          "description": "The learner's answer, passed through unchanged. May be absent: recordAttempt() does not default it, and JSON serialization drops an undefined value."
+        },
+        "result": {
+          "type": "string",
+          "enum": ["pass", "partial", "fail"],
+          "description": "Attempt outcome, mirroring ATTEMPT_RESULTS. recordAttempt() rejects anything else. 'pass' schedules reviews as correct; anything else schedules them as incorrect."
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Score from 0 to 100. recordAttempt() rejects non-integers and out-of-range values."
+        },
+        "mistake_type": {
+          "type": "string",
+          "description": "Misconception category; defaults to an empty string."
+        },
+        "feedback": {
+          "type": "string",
+          "description": "Evaluator feedback; defaults to an empty string and is reused as the review prompt when non-empty."
+        },
+        "concepts_to_review": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Concepts queued for review; defaults to the concepts of the attempted spec."
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) of the attempt."
+        }
+      }
+    },
+    "ReviewItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "concept", "prompt", "source", "result", "created_at", "due_at"],
+      "description": "One spaced-repetition item, as stored in review_state.due_items, next_review_items, and review_history. createReviewItem() always writes these seven keys; completeReview() additionally stamps completed_result, completed_at, and sometimes notes onto the archived copy.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable 12-hex-character id derived from the concept and prompt (stableId('review', ...)); migrate() back-fills it for legacy items that lack one."
+        },
+        "concept": {
+          "type": "string",
+          "description": "The concept under review."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "The recall question shown to the learner."
+        },
+        "source": {
+          "type": "string",
+          "description": "Where the item came from; defaults to 'manual'. Existing callers also use 'attempt' (recordAttempt) and 'diagnosis' (the mistake tool)."
+        },
+        "result": {
+          "type": "string",
+          "enum": ["correct", "second_correct", "third_correct", "incorrect", "fuzzy"],
+          "description": "Scheduled recall outcome, mirroring REVIEW_RESULTS. It selects the interval: correct 1 day, second_correct 3 days, third_correct 7 days, incorrect and fuzzy 0 days."
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) the item was created."
+        },
+        "due_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) the item becomes due, derived from created_at plus the interval for result."
+        },
+        "completed_result": {
+          "type": "string",
+          "enum": ["correct", "second_correct", "third_correct", "incorrect", "fuzzy"],
+          "description": "Recall outcome of the completed review. Present only on archived review_history entries."
+        },
+        "completed_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) the review was completed. Present only on archived review_history entries."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form completion notes. Present only on archived review_history entries, and only when completeReview() was given notes."
+        }
+      }
+    },
+    "DifficultyEvidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["signal", "detail", "source", "recorded_at"],
+      "description": "One difficulty_state.evidence entry, appended by _recordEvidenceInState(). Extension over upstream, which typed this as a bare object.",
+      "properties": {
+        "signal": {
+          "type": "string",
+          "description": "Raw difficulty signal. Recognized values are POSITIVE_DIFFICULTY_SIGNALS (exercise_completed, explain_correct, recall_correct) and NEGATIVE_DIFFICULTY_SIGNALS (exercise_failed, recall_incorrect, explain_fuzzy, setup_failed). The kernel does not validate it: unknown signals are recorded and ignored when re-ranking."
+        },
+        "detail": {
+          "type": "string",
+          "description": "What the signal refers to, always coerced to a string."
+        },
+        "source": {
+          "type": "string",
+          "description": "Who recorded the signal; defaults to 'manual'."
+        },
+        "recorded_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) the evidence was recorded."
+        }
+      }
+    },
+    "CurrentTask": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "name", "notes", "status", "created_at"],
+      "description": "One practice_state.current_tasks entry, written by addTask() and by migrate() when it converts legacy current_project_tasks strings. Extension over upstream, which typed this as a bare object.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable 12-hex-character id derived from the task name (stableId('task', name))."
+        },
+        "name": {
+          "type": "string",
+          "description": "The task to queue."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form notes; defaults to an empty string."
+        },
+        "status": {
+          "type": "string",
+          "description": "Task status; the kernel only ever writes 'pending'. Not validated, so a downstream tool may set other values."
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) the task was queued."
+        }
+      }
+    },
+    "ExerciseRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "name", "concepts", "notes", "status", "completed_at", "failed_at", "created_at"],
+      "description": "One practice_state.completed_exercises or failed_exercises entry, written in full by recordExercise(). Extension over upstream, which typed these as bare objects.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable 12-hex-character id derived from the exercise name (stableId('exercise', name))."
+        },
+        "name": {
+          "type": "string",
+          "description": "Exercise name."
+        },
+        "concepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Concepts the exercise covered."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form notes; defaults to an empty string."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "failed"],
+          "description": "Receipt status; recordExercise() rejects anything else and files the record under the matching list."
+        },
+        "completed_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) when status is 'completed', otherwise an empty string."
+        },
+        "failed_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) when status is 'failed', otherwise an empty string."
+        },
+        "created_at": {
+          "type": "string",
+          "description": "Local timestamp (YYYY-MM-DDTHH:MM:SS) of the receipt."
+        }
+      }
+    },
+    "CodeErrorRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "concept", "concepts", "mistake_type", "detail", "recorded_at"],
+      "description": "One practice_state.last_code_errors entry, written by the plugin's mistake tool (lib/tools.js >= action 'mistake') and trimmed to the last 20. Extension over upstream, which typed it as an untyped array.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Timestamp-derived id (base-36 clock value plus the joined concept names), not a stableId hash."
+        },
+        "concept": {
+          "type": "string",
+          "description": "First diagnosed concept."
+        },
+        "concepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "All diagnosed concepts; the tool rejects an empty list."
+        },
+        "mistake_type": {
+          "type": "string",
+          "description": "Misconception category; defaults to an empty string."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Diagnosis text taken from feedback, notes, or mistake_type."
+        },
+        "recorded_at": {
+          "type": "string",
+          "description": "ISO calendar date (YYYY-MM-DD) of the diagnosis."
+        }
+      }
+    },
+    "concept_progress": {
+      "$ref": "#/$defs/ConceptProgress",
+      "description": "Upstream-Python alias for ConceptProgress; kept so files and tools written against the upstream $defs name keep resolving."
+    },
+    "exercise_spec": {
+      "$ref": "#/$defs/ExerciseSpec",
+      "description": "Upstream-Python alias for ExerciseSpec."
+    },
+    "attempt_record": {
+      "$ref": "#/$defs/AttemptRecord",
+      "description": "Upstream-Python alias for AttemptRecord."
+    },
+    "review_item": {
+      "$ref": "#/$defs/ReviewItem",
+      "description": "Upstream-Python alias for ReviewItem."
+    }
+  }
+}

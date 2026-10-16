@@ -62,6 +62,31 @@ class ToolsMock extends Service {
   }
 }
 
+/**
+ * A stand-in for `ctx.webServer` that records registered routes.
+ *
+ * Same lifecycle contract as the real carrier: `register` attaches its disposer
+ * to the calling fiber, so the route must disappear when the plugin is disposed.
+ */
+class WebServerMock extends Service {
+  constructor(ctx) {
+    super(ctx, 'webServer')
+    /** @type {object[]} */
+    this.routes = []
+  }
+
+  register(route) {
+    this.routes.push(route)
+    return this.ctx.effect(
+      () => () => {
+        const at = this.routes.indexOf(route)
+        if (at >= 0) this.routes.splice(at, 1)
+      },
+      `webServer.register(${route.path})`,
+    )
+  }
+}
+
 /** A stand-in for `ctx.systemPrompt` that records context contributions. */
 class SystemPromptMock extends Service {
   constructor(ctx) {
@@ -93,6 +118,11 @@ async function mountPlugin(config = {}) {
     apply(inner) {
       inner.plugin(ToolsMock)
       inner.plugin(SystemPromptMock)
+      // Also stubbed so the optional `webServer` dependency resolves and the
+      // panel route mounts; without it that fiber stays PENDING, which is the
+      // correct behaviour in a headless composition and the reason the route is
+      // not in the wait condition below.
+      inner.plugin(WebServerMock)
     },
   })
   const fiber = ctx.plugin(plugin, { root: dir, scope: 'project', ...config })
@@ -105,14 +135,35 @@ async function mountPlugin(config = {}) {
     await new Promise(resolve => setTimeout(resolve, 10))
   }
   assert.equal(ctx.tools?.registered.size, 5, 'plugin did not register its tools in time')
+  // The route mounts on its own fiber, so it can land a tick after the tools.
+  for (let attempt = 0; attempt < 100 && (ctx.webServer?.routes.length ?? 0) < 1; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
   return {
     dir,
     ctx,
     fiber,
     tools: ctx.tools.registered,
     contexts: ctx.systemPrompt.contexts,
+    routes: ctx.webServer?.routes ?? [],
     cleanup() {
       rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+/** A response recorder implementing the subset the panel route calls. */
+function createResponse() {
+  const record = { status: undefined, headers: undefined, body: '', ended: false }
+  return {
+    record,
+    writeHead(status, headers) {
+      record.status = status
+      record.headers = headers
+    },
+    end(chunk) {
+      record.body = chunk ?? ''
+      record.ended = true
     },
   }
 }
@@ -143,9 +194,15 @@ test('loads into Cordis, registers every tool, and contributes prompt context', 
       [...harness.tools.keys()].sort(),
       ['learning_domain', 'learning_due', 'learning_record', 'learning_session', 'learning_status'],
     )
-    assert.equal(harness.contexts.length, 1)
-    assert.equal(harness.contexts[0].name, 'learning-accelerator/status')
-    assert.equal(harness.contexts[0].order, 150)
+    assert.equal(harness.contexts.length, 2)
+    const byName = Object.fromEntries(harness.contexts.map(entry => [entry.name, entry]))
+    assert.deepEqual(
+      Object.keys(byName).sort(),
+      ['learning-accelerator/protocol', 'learning-accelerator/status'],
+    )
+    // The protocol sits one order above the state block: method before queue.
+    assert.equal(byName['learning-accelerator/protocol'].order, 149)
+    assert.equal(byName['learning-accelerator/status'].order, 150)
   } finally {
     harness.cleanup()
   }
@@ -361,13 +418,124 @@ test('read tools report malformed state instead of failing the turn', async () =
 test('prompt context stays silent until a learning state exists', async () => {
   const harness = await mountPlugin()
   try {
-    const [entry] = harness.contexts
+    const [entry] = harness.contexts.filter(item => item.name === 'learning-accelerator/status')
     assert.equal(entry.text({ agent: { session: { header: { cwd: harness.dir } } } }), '')
     await run(harness, 'learning_session', { domain: 'technology', learning_goal: '学 Cordis', current_topic: 'effect' })
     const injected = entry.text({ agent: { session: { header: { cwd: harness.dir } } } })
     assert.match(injected, /学习状态/)
     assert.match(injected, /学 Cordis/)
     assert.match(injected, /learning_record/)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('the teaching protocol is injected once a track exists, adapted to the profile', async () => {
+  const harness = await mountPlugin()
+  try {
+    const entry = harness.contexts.find(item => item.name === 'learning-accelerator/protocol')
+    assert.ok(entry, 'the protocol context was not registered')
+    const read = () => entry.text({ agent: { session: { header: { cwd: harness.dir } } } })
+
+    // Same gate as the state block: a directory with no learner costs nothing.
+    assert.equal(read(), '')
+
+    await run(harness, 'learning_session', {
+      domain: 'technology',
+      known_skills: ['JavaScript', 'React'],
+      experience_level: 'intermediate',
+      learning_goal: '掌握 DSH 插件机制',
+      current_topic: 'Cordis 插件',
+    })
+    const frontend = read()
+    assert.match(frontend, /教学协议/)
+    assert.match(frontend, /本轮模式（只选一个）/)
+    assert.match(frontend, /`onboarding`/)
+    // A stated frontend background selects the frontend mapping table…
+    assert.match(frontend, /Python dict \| JavaScript object \/ Map/)
+    assert.doesNotMatch(frontend, /一份菜谱/)
+
+    // …and a stated no-programming background selects the everyday analogies.
+    await run(harness, 'learning_session', { experience_level: 'no_programming', known_skills: [] })
+    const none = read()
+    assert.match(none, /一份菜谱/)
+    assert.doesNotMatch(none, /Python dict \| JavaScript object \/ Map/)
+
+    // Unknown background must not be handed frontend analogies by default.
+    await run(harness, 'learning_session', { experience_level: 'unknown', known_skills: [] })
+    assert.doesNotMatch(read(), /Python dict \| JavaScript object \/ Map/)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('onboarding carries the protocol, because the first turn has no state file yet', async () => {
+  const harness = await mountPlugin()
+  try {
+    // A brand-new directory: the prompt block is silent, so these two tools are
+    // the only way the method reaches the first learning turn.
+    const domain = await run(harness, 'learning_domain', { domain: 'language' })
+    assert.match(domain.teaching_protocol, /教学协议/)
+    assert.match(domain.teaching_protocol, /发音、词汇、句型/)
+
+    const session = await run(harness, 'learning_session', {
+      domain: 'language',
+      experience_level: 'no_programming',
+      learning_goal: '通过日语 N5',
+    })
+    assert.match(session.teaching_protocol, /一份菜谱/)
+    assert.match(session.teaching_protocol, /发音、词汇、句型/)
+
+    const rendered = harness.tools.get('learning_session').output.render({}, session)
+    assert.match(rendered[0].text, /教学协议/, 'the renderer dropped the protocol the model needs')
+    const renderedDomain = harness.tools.get('learning_domain').output.render({}, domain)
+    assert.match(renderedDomain[0].text, /教学协议/)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('the panel route follows the session directory through the real wiring', async () => {
+  // The regression this guards is a *wiring* bug, not a logic bug: `panelRequest`
+  // resolved the session path correctly when called with no arguments, but `apply`
+  // always handed it the configured `scope`, whose default is `'project'`. Since
+  // any explicit scope means "stop following sessions", the panel silently fell
+  // back to the configured root or the process directory. Only a test that goes
+  // through `apply` and the route handler can see that.
+  const harness = await mountPlugin()
+  try {
+    await run(harness, 'learning_session', { learning_goal: '面板跟随会话', current_topic: 'wiring' })
+
+    const route = harness.routes.find(entry => entry.path === '/learning-accelerator/panel')
+    assert.ok(route, 'the panel route was not registered')
+    const res = createResponse()
+    route.handler({ headers: { host: '127.0.0.1:3080' }, method: 'GET' }, res)
+
+    assert.equal(res.record.status, 200)
+    const payload = JSON.parse(res.record.body)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.path, join(harness.dir, '.learning', 'state.json'))
+    // `argument`, not `session-cwd`: the panel resolves the session path itself
+    // and then hands it to the store as an explicit file, which is what makes the
+    // browser request reproducible.
+    assert.equal(payload.source, 'argument')
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('an explicitly configured scope still pins the panel', async () => {
+  // The other half of the same contract: an operator who chooses a user-level
+  // store must get it, rather than the session's project file.
+  const harness = await mountPlugin({ scope: 'user' })
+  try {
+    const route = harness.routes.find(entry => entry.path === '/learning-accelerator/panel')
+    assert.ok(route, 'the panel route was not registered')
+    const res = createResponse()
+    route.handler({ headers: { host: '127.0.0.1:3080' }, method: 'GET' }, res)
+    const payload = JSON.parse(res.record.body)
+    assert.equal(payload.scope, 'user')
+    assert.match(payload.path, /\.learning-accelerator\/state\.json$/)
   } finally {
     harness.cleanup()
   }
@@ -490,11 +658,11 @@ test('sessionCwd and resolveStatePath follow the documented precedence', () => {
   assert.equal(user.source, 'user-scope')
 })
 
-test('disposing the plugin unwinds tools and prompt context', async () => {
+test('disposing the plugin unwinds tools and both prompt contexts', async () => {
   const harness = await mountPlugin()
   try {
     assert.equal(harness.tools.size, 5)
-    assert.equal(harness.contexts.length, 1)
+    assert.equal(harness.contexts.length, 2)
     await harness.fiber.dispose()
     assert.equal(harness.tools.size, 0)
     assert.equal(harness.contexts.length, 0)
@@ -503,12 +671,21 @@ test('disposing the plugin unwinds tools and prompt context', async () => {
   }
 })
 
-test('injectPromptContext: false keeps the tools but drops the prompt block', async () => {
-  const harness = await mountPlugin({ injectPromptContext: false })
+test('injectPromptContext and injectProtocol are independent switches', async () => {
+  // Neither block: the tools survive, the prompt stays untouched.
+  const off = await mountPlugin({ injectPromptContext: false, injectProtocol: false })
   try {
-    assert.equal(harness.tools.size, 5)
-    assert.equal(harness.contexts.length, 0)
+    assert.equal(off.tools.size, 5)
+    assert.equal(off.contexts.length, 0)
   } finally {
-    harness.cleanup()
+    off.cleanup()
+  }
+
+  // State off, method on: a learner who wants the protocol but not the queue.
+  const methodOnly = await mountPlugin({ injectPromptContext: false })
+  try {
+    assert.deepEqual(methodOnly.contexts.map(entry => entry.name), ['learning-accelerator/protocol'])
+  } finally {
+    methodOnly.cleanup()
   }
 })
