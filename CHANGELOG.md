@@ -40,19 +40,75 @@ project until a turn ran somewhere else.
   open conversation, `root` is a fallback rather than a pin, and pinning means an
   explicit `stateFile` — which pins every tool call too.
 
+### Changed — the panel itself
+
+`docs/panel-ui-review.md` audits the tab against Refactoring UI's frameworks and
+records 37 findings; 30 are implemented here, 5 partially, 2 left open. Two of the
+findings were not taste — the stylesheet was not doing what it said.
+
+- **Two state tokens were misspelled, and the fallbacks hid it.**
+  `.dla-meter-fill.low` read `var(--dsw-alias-state-warning, …)` and `.dla-error`
+  read `var(--dsw-alias-state-error, …)`. Neither name exists — the theme spells
+  them `state-warn-primary` / `state-error-primary` — so the "below 40% turns
+  amber" branch and the error colour had never once applied. A test now asserts
+  both the real names and the absence of the invented one.
+- **`Primitives.Pill` chips were invisible in light mode.** The primitive has no
+  border and a `bg-layer-2` fill, and light mode maps every `bg-layer-*` to
+  `#ffffff`. The metadata chips are gone (those values moved to a subtitle line)
+  and `Primitives.Tag`, which carries its own edge and `color-mix` tint, is used
+  for mastered concepts instead.
+- **Supporting text was below AA.** `--dsw-alias-label-tertiary` is `#81858c` in
+  light: 3.71:1 on white, under the 4.5:1 normal text needs (dark mode is 8.54:1).
+  Prompts, section titles and body copy move to `label-secondary` (5.80:1), and
+  tertiary is kept for marks that are not read. The panel also rides
+  `--dsh-content-font-size-secondary` / `--dsh-content-font-size` now, so it
+  follows Settings → Font size like every other surface — verified at 14px and
+  18px. Line heights become unitless and spacing collapses to 4/8/12/16/24.
+- **The payload was rendered three times over.** `priority_reviews`,
+  `weak_concepts` and `concept_progress` each listed the same concepts with the
+  same strength. The weak chip wall is gone and the concept list excludes anything
+  already in the due queue, so a concept appears once (a test counts occurrences).
+  The due queue leads and is the only carded section; section spacing (24) now
+  exceeds item spacing (12), which it previously did not — both were 16. The state
+  path drops to a one-line footer with the full value in `title`, and the heading
+  renders `3 / 6` to reconcile the capped queue with `counts.due`.
+- **Fields that were already in the payload and never shown.** `correct_streak`
+  (rendered as 连对 N), `due_at` (逾期 N 天, replacing the opaque internal priority
+  score), `target_outcome`, and `mastered_concepts` as tags. The panel was
+  otherwise a pure list of deficits.
+- **Structure and states.** Real elements — `section`, `h2`/`h3`/`h4`, `ul`/`li`,
+  `dl`/`dt`/`dd` — and the meter is `aria-hidden`, because the numbers beside it
+  are the content. First load renders a same-shape skeleton plus a visually hidden
+  `role="status"`; Refresh keeps the current data on screen and no longer resets
+  scroll, and a superseded response can no longer overwrite newer data. The empty
+  state loses a Refresh button that could not change anything and gains a
+  paste-ready opener; the error state leads with a sentence and demotes the raw
+  exception. The rail shows a dot and the wide seat a count beside the label,
+  instead of a near-black badge sitting on the glyph.
+- `docs/panel-ui-review.md` carries before/after images rendered from the real
+  component rather than mock-ups: the bundle is loaded through the same sandbox
+  the tests build and its tree is serialized, with the "before" column taken from
+  `git show HEAD:lib/client.js`.
+
 ### Tests
 
-- `tests/client-plugin.test.js` gains three cases: the tab sends the open
-  conversation's workspace, switching session switches the requested workspace
-  (the regression, which fails against the pre-fix client), and an unknown
-  workspace sends no hint rather than inventing one.
+- `tests/client-plugin.test.js` gains three cases for the workspace hint: the tab
+  sends the open conversation's workspace, switching session switches the
+  requested workspace (the regression, which fails against the pre-fix client),
+  and an unknown workspace sends no hint rather than inventing one.
+- `tests/client-plugin.test.js` gains nine more for the panel overhaul, each
+  pinning behaviour that would otherwise regress silently: the real state-token
+  names and the font axis, `max-width`, a refresh that keeps the state on screen,
+  a due concept rendered once rather than twice, the `3 / 6` reconciliation,
+  `correct_streak` and the overdue line, the payload fields that were forwarded
+  but unused, an empty state with no dead Refresh, and the rail dot.
 - `tests/panel-route.test.js` gains six: `panelCwdFromRequest` accepts the
   absolute spellings the client can emit and rejects the rest; a reported
   workspace wins over the host's remembered session and lands as
   `source: "panel-cwd"`; an explicit `stateFile`, a configured `scope`, or a bad
   hint still decides normally; and the route renders a reported workspace end to
   end while a rejected hint falls back to the session path.
-- Suite: 91 tests, 91 pass, 0 skipped (up from 82).
+- Suite: 100 tests, 100 pass, 0 skipped (up from 82).
 
 ## v0.2.1
 

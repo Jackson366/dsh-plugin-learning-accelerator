@@ -206,7 +206,7 @@ cordis.patch.yml        the bundle layer
 docs/                   analysis (why the design is what it is), teaching protocol, usage, architecture, extending
 schemas/                JSON Schema for .learning/state.json, aligned with the JS kernel
 examples/               the eight upstream examples, rewritten around this plugin's tools
-tests/                  82 tests across 7 files
+tests/                  100 tests across 7 files
 ```
 
 ## Tests

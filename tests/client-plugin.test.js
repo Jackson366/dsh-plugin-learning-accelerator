@@ -264,6 +264,20 @@ function textOf(node, out = []) {
   return out
 }
 
+/** Every node in a rendered tree whose `type` name matches, for prop assertions. */
+function findAll(node, type, out = []) {
+  if (node === null || node === undefined || typeof node === 'boolean') return out
+  if (Array.isArray(node)) {
+    for (const child of node) findAll(child, type, out)
+    return out
+  }
+  if (typeof node === 'object' && 'props' in node) {
+    if (node.type === type) out.push(node)
+    findAll(node.props.children, type, out)
+  }
+  return out
+}
+
 /** A realistic successful panel payload. */
 function samplePayload() {
   return {
@@ -357,6 +371,105 @@ test('the panel requests exactly the path the host route serves', async () => {
   renderer.render('view', componentFor('conversation.view'), { t: (key) => key })
   await settle()
   assert.deepEqual(seen, ['/learning-accelerator/panel'])
+})
+
+/**
+ * One Session-list snapshot in the shape `useSessions` selects over.
+ *
+ * Only `ids` and `byId[id].cwd` matter here; the rest of a `SessionSummary` is
+ * irrelevant to the workspace hint.
+ */
+function sessionList(rows) {
+  return { ids: Object.keys(rows), byId: rows }
+}
+
+test("the panel sends the open conversation's workspace as a cwd hint", async () => {
+  const seen = []
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async (url) => {
+      seen.push(url)
+      return { ok: true, json: async () => samplePayload() }
+    },
+  })
+  const { componentFor } = mount()
+  renderer.render('view', componentFor('conversation.view'), {
+    t: (key) => key,
+    sessionId: 'session-a',
+    useSessions: (select) => select(sessionList({ 'session-a': { sessionId: 'session-a', cwd: '/tmp/other project' } })),
+  })
+  await settle()
+  // Encoded, because a workspace path may hold spaces and the host reads it back
+  // with `URLSearchParams`.
+  assert.deepEqual(seen, [`/learning-accelerator/panel?cwd=${encodeURIComponent('/tmp/other project')}`])
+})
+
+test('switching the open conversation switches the panel to that workspace', async () => {
+  // The regression: the panel used to follow whichever session resolved a store
+  // last inside the host process, so the GUI showed the previous workspace until
+  // a turn happened to run somewhere else.
+  const seen = []
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async (url) => {
+      seen.push(url)
+      return { ok: true, json: async () => samplePayload() }
+    },
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+
+  renderer.render('view', slot, {
+    t: (key) => key,
+    sessionId: 'session-a',
+    useSessions: (select) => select(sessionList({ 'session-a': { sessionId: 'session-a', cwd: '/tmp/alpha' } })),
+  })
+  await settle()
+  renderer.render('view', slot, {
+    t: (key) => key,
+    sessionId: 'session-b',
+    useSessions: (select) => select(sessionList({ 'session-b': { sessionId: 'session-b', cwd: '/tmp/beta' } })),
+  })
+  await settle()
+
+  assert.deepEqual(seen, [
+    `/learning-accelerator/panel?cwd=${encodeURIComponent('/tmp/alpha')}`,
+    `/learning-accelerator/panel?cwd=${encodeURIComponent('/tmp/beta')}`,
+  ])
+})
+
+test('an unknown session workspace sends no hint instead of guessing one', async () => {
+  const seen = []
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async (url) => {
+      seen.push(url)
+      return { ok: true, json: async () => samplePayload() }
+    },
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+
+  // Three ways the hint can be missing: no session standard kit at all (the
+  // composition that renders this slot without `ui-session`), a session the list
+  // has not indexed, and a row the host has no cwd for.
+  renderer.render('view', slot, { t: (key) => key })
+  await settle()
+  renderer.render('view', slot, {
+    t: (key) => key,
+    sessionId: 'session-missing',
+    useSessions: (select) => select(sessionList({ 'session-a': { sessionId: 'session-a', cwd: '/tmp/alpha' } })),
+  })
+  await settle()
+  renderer.render('view', slot, {
+    t: (key) => key,
+    sessionId: 'session-a',
+    useSessions: (select) => select(sessionList({ 'session-a': { sessionId: 'session-a' } })),
+  })
+  await settle()
+
+  assert.deepEqual(seen, [
+    '/learning-accelerator/panel',
+    '/learning-accelerator/panel',
+    '/learning-accelerator/panel',
+  ])
 })
 
 test('the panel renders the learner state once the fetch resolves', async () => {
@@ -501,7 +614,11 @@ test('the English locale renders when English is active', async () => {
   await settle()
   const text = textOf(renderer.render('view', slot, { t })).join(' ')
   assert.match(text, /Learning Accelerator/)
-  assert.match(text, /Priority reviews/)
+  // The due queue leads the panel, so its heading is the "due now" copy.
+  assert.match(text, /Due now/)
+  // Enums travel as raw values and must be localized, never leaked.
+  assert.match(text, /Technology · Beginner/)
+  assert.match(text, /Difficulty 2\/5 harder/)
 })
 
 test('a component without a t prop still renders (defensive default)', async () => {
@@ -515,3 +632,193 @@ test('a component without a t prop still renders (defensive default)', async () 
   const text = textOf(renderer.render('view', slot, {})).join(' ')
   assert.match(text, /panel\.title/)
 })
+
+test('the stylesheet names only state tokens the theme defines, and rides the font axis', () => {
+  const { styleTags } = loadBundle()
+  const css = styleTags[0].textContent
+  // The regression this guards: `--dsw-alias-state-warning` and
+  // `--dsw-alias-state-error` do not exist in the theme, and the `var(…, fallback)`
+  // around them hid the typo — so the low-strength colour and the error colour
+  // silently never applied. The real names are `state-warn-*` / `state-error-*`.
+  assert.equal(/--dsw-alias-state-warning/.test(css), false, 'no such token')
+  assert.equal(/--dsw-alias-state-error(?!-)/.test(css), false, 'error tokens are suffixed')
+  assert.ok(css.includes('var(--dsw-alias-state-warn-primary)'), 'low strength must use the real warn token')
+  assert.ok(css.includes('var(--dsw-alias-state-error-primary)'), 'the error card must use the real error token')
+  // Hard pixels would ignore the Settings → Font size control every other
+  // surface honours, so body copy has to ride the published axis.
+  assert.ok(css.includes('var(--dsh-content-font-size-secondary,13px)'), 'body text must ride the font axis')
+  assert.ok(css.includes('var(--dsh-content-font-size,14px)'), 'the title must ride the font axis')
+  // A wide conversation view must not stretch the panel's measure.
+  assert.ok(css.includes('max-width:760px'), 'the panel content needs a max-width')
+})
+
+test('the panel keeps the state on screen while a refresh is in flight', async () => {
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({ ok: true, json: async () => samplePayload() }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+  const t = (key) => ZH[key] ?? key
+
+  // The regression: `load` used to clear the data before fetching, so pressing
+  // Refresh blanked the panel to one line and then rebuilt it — which also threw
+  // away the scroll position, because the panel root is the scroller.
+  renderer.render('view', slot, { t })
+  await settle()
+  const ready = renderer.render('view', slot, { t })
+  const refresh = findAll(ready, 'Primitives.Button')
+  assert.ok(refresh.length > 0, 'the ready panel should offer a refresh')
+  refresh[0].props.onClick()
+
+  const during = textOf(renderer.render('view', slot, { t })).join(' ')
+  assert.match(during, /掌握 DSH 插件机制/, 'the goal must survive a refresh')
+  assert.equal(/正在读取学习状态/.test(during), false, 'a refresh must not fall back to the loading frame')
+})
+
+test('the review queue is not repeated by the concept list', async () => {
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({ ok: true, json: async () => samplePayload() }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+  renderer.render('view', slot, { t: (key) => key })
+  await settle()
+  const tree = renderer.render('view', slot, { t: (key) => key })
+  // `samplePayload`'s only concept is already due, so it belongs to the queue
+  // and must not be listed a second time under "other concepts".
+  const occurrences = textOf(tree).filter((value) => value === 'waterfall 语义').length
+  assert.equal(occurrences, 1, 'a due concept must be rendered once, not twice')
+})
+
+test('the due heading reconciles the queue length with the due total', async () => {
+  const payload = samplePayload()
+  // The host caps `priority_reviews` at five while `counts.due` counts them all.
+  payload.counts = { ...payload.counts, due: 3 }
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({ ok: true, json: async () => payload }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+  renderer.render('view', slot, { t: (key) => key })
+  await settle()
+  const text = textOf(renderer.render('view', slot, { t: (key) => key })).join(' ')
+  assert.match(text, /1 \/ 3/, 'the heading must show shown/total, not a bare count')
+})
+
+test('the panel shows progress the payload already carries, not only failures', async () => {
+  const payload = samplePayload()
+  payload.priority_reviews = []
+  payload.due_reviews = []
+  payload.counts = { ...payload.counts, due: 0 }
+  payload.concept_progress = [
+    { concept: 'waterfall 语义', strength: 0.5, failure_count: 2, correct_streak: 3 },
+  ]
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({ ok: true, json: async () => payload }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+  renderer.render('view', slot, { t: (key) => key })
+  await settle()
+  const text = textOf(renderer.render('view', slot, { t: (key) => key })).join(' ')
+  // `correct_streak` rode along in the payload and was never rendered, so the
+  // panel was a pure list of deficits.
+  assert.match(text, /panel\.streak 3/)
+  assert.match(text, /panel\.failures 2/)
+})
+
+test('an overdue review says how late it is instead of showing an opaque score', async () => {
+  const payload = samplePayload()
+  payload.priority_reviews = [
+    { id: 'r1', concept: 'waterfall 语义', prompt: '不调用 next() 会怎样', strength: 0.3, due_at: '2020-01-01' },
+  ]
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({ ok: true, json: async () => payload }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+  renderer.render('view', slot, { t: (key) => key })
+  await settle()
+  const text = textOf(renderer.render('view', slot, { t: (key) => key })).join(' ')
+  assert.match(text, /panel\.overdue/, 'a due date should be actionable')
+  assert.equal(/\bP\d+\b/.test(text), false, 'the internal priority score is not user-facing copy')
+})
+
+test('the panel renders the payload fields that used to be forwarded but unused', async () => {
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({ ok: true, json: async () => samplePayload() }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+  renderer.render('view', slot, { t: (key) => key })
+  await settle()
+  const text = textOf(renderer.render('view', slot, { t: (key) => key })).join(' ')
+  assert.match(text, /写出可安装的 DSH 插件/, 'target_outcome was forwarded and never shown')
+  assert.ok(findAll(renderer.render('view', slot, { t: (key) => key }), 'Primitives.Tag').length > 0,
+    'mastered concepts should render as tags')
+})
+
+test('the empty state hides the refresh control that could not change anything', async () => {
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        path: '/tmp/empty/.learning/state.json',
+        profile: { learning_domain: 'general', level: 'beginner' },
+        topic: '',
+        difficulty: { current: 1, next_adjustment: 'same' },
+        mastered_concepts: [],
+        weak_concepts: [],
+        due_reviews: [],
+        priority_reviews: [],
+        concept_progress: [],
+        current_tasks: [],
+        counts: {},
+      }),
+    }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('conversation.view')
+  renderer.render('view', slot, { t: (key) => key })
+  await settle()
+  const tree = renderer.render('view', slot, { t: (key) => key })
+  // Re-reading a file that does not exist returns the same empty payload, so the
+  // control would imply an action that changes nothing.
+  assert.equal(findAll(tree, 'Primitives.Button').length, 0, 'no dead refresh control')
+  assert.ok(findAll(tree, 'Primitives.Tag').length === 0)
+  assert.match(textOf(tree).join(' '), /panel\.empty\.title/)
+})
+
+test('the collapsed rail carries a dot and the wide seat carries the count', async () => {
+  const { mount, renderer } = loadBundle({
+    fetchImpl: async () => ({ ok: true, json: async () => samplePayload() }),
+  })
+  const { componentFor } = mount()
+  const slot = componentFor('sidebar.footer.action')
+  const t = (key) => ZH[key] ?? key
+  renderer.render('sidebar', slot, { t, wide: false })
+  await settle()
+
+  // A 44px rail cannot seat a glyph plus a two-digit badge, so the number is
+  // wide-only and the accessible name carries it in both.
+  const rail = renderer.render('sidebar', slot, { t, wide: false })
+  assert.equal(hasClass(rail, 'dla-badge'), false)
+  assert.equal(hasClass(rail, 'dla-dot'), true)
+  assert.match(String(rail.props.title), /1/)
+
+  const wide = renderer.render('sidebar', slot, { t, wide: true })
+  assert.equal(hasClass(wide, 'dla-dot'), false)
+  assert.equal(hasClass(wide, 'dla-badge'), true)
+})
+
+/** Whether any node in a rendered tree carries one class name. */
+function hasClass(node, className) {
+  if (node === null || node === undefined || typeof node === 'boolean') return false
+  if (Array.isArray(node)) return node.some((child) => hasClass(child, className))
+  if (typeof node === 'object' && 'props' in node) {
+    const own = typeof node.props.className === 'string' && node.props.className.split(' ').includes(className)
+    return own || hasClass(node.props.children, className)
+  }
+  return false
+}
