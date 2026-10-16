@@ -1,0 +1,95 @@
+name: Release
+
+# Upstream Learning-Accelerator publishes on a `v*` tag; this package had CI but
+# no release path at all. A tag is the release trigger here too.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Check out this package
+        uses: actions/checkout@v4
+
+      # The version in package.json is about to be attached to a public release
+      # and a tarball name. Cheap to check, expensive to get wrong.
+      - name: Check that the tag matches package.json
+        id: version
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package.json ${pkg}" >&2
+            exit 1
+          fi
+          echo "value=${pkg#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      # Same reasoning as ci.yml: the suite's central guarantee is byte-equality
+      # with the Python store, and the test resolves `../Learning-Accelerator`, so
+      # a release must not be cut on a silently skipped guarantee.
+      - name: Check out upstream Learning-Accelerator alongside this package
+        run: git clone --depth 1 https://github.com/Maolipeng/Learning-Accelerator.git ../Learning-Accelerator
+
+      # Pins mirror ci.yml; `latest` does not satisfy the peer range.
+      - name: Install the host peer packages
+        run: |
+          npm install --no-save --no-package-lock \
+            @deepseek-ai/cordis@^4.0.4 \
+            @deepseek-ai/schemastery@^3.18.2 \
+            @deepseek-ai/dsh-tools@0.2.0-rc.2 \
+            @deepseek-ai/dsh-system-prompt@0.2.0-rc.2
+
+      - name: Run the suite
+        run: node --test tests/
+
+      - name: Build the tarball
+        run: npm pack
+
+      - name: Attach the tarball to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dsh-plugin-learning-accelerator-*.tgz
+          generate_release_notes: true
+
+  # Its own job so the `if` can read the secret: a step cannot see its own `env`
+  # in its own `if`, which would make an inline gate silently never run.
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ secrets.NPM_TOKEN != '' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out this package
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      # Rebuild from source rather than reusing the release job's artifact: the
+      # tarball is reproducible and this keeps the publish path independent of
+      # artifact plumbing.
+      - name: Verify the version one more time
+        run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+
+      - name: Publish with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public

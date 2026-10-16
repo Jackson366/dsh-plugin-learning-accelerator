@@ -223,3 +223,76 @@ test('priority ranking prefers weak concepts and low strength', () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('priority ranking breaks ties by code point, like the Python store', () => {
+  // Ordering in `priorityReviews` when a graded list has no rule to order by. Python
+  // compares `str` by code point; `localeCompare` compares by locale collation,
+  // which is case-insensitive at the primary level and therefore returns a
+  // different order for exactly this input (`B` sorts before `aaa` in Python, and
+  // after it in a locale collation). Every concept here fails an `incorrect`
+  // review, so every item shares one priority and one `due_at`: the tie-break is
+  // the only thing under test.
+  const concepts = ['B', 'ZZZ', 'aaa', 'z1', 'm', 'n']
+  const dir = mkdtempSync(join(tmpdir(), 'la-tiebreak-'))
+  try {
+    const store = new LearningStore(join(dir, 'state.json'))
+    store.reset()
+    store.setTopic('tie-break')
+    for (const concept of concepts) store.addReview(concept, `prompt ${concept}`, 'incorrect')
+
+    const ranked = store.priorityReviews(undefined, concepts.length)
+    assert.equal(ranked.length, concepts.length, 'every concept must survive ranking')
+
+    // Precondition: the fixture only exercises the tie-break if everything ties.
+    const priorities = new Set(ranked.map(item => item.priority))
+    const dueDates = new Set(ranked.map(item => item.due_at))
+    assert.equal(priorities.size, 1, `expected one shared priority, got ${[...priorities]}`)
+    assert.equal(dueDates.size, 1, `expected one shared due date, got ${[...dueDates]}`)
+
+    const jsOrder = ranked.map(item => item.concept)
+    assert.deepEqual(jsOrder, [...concepts].sort())
+    // `localeCompare` would produce this instead — assert the regression directly
+    // so the test still fails loudly if the comparator is ever reverted.
+    assert.notDeepEqual(jsOrder, [...concepts].sort((left, right) => left.localeCompare(right)))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('ranking order is identical to the Python store for tied items', { skip }, () => {
+  // Same fixture, driven through both kernels. This is the check that would have
+  // caught the `localeCompare` divergence: the byte-equality scenario above never
+  // produces two items with the same priority *and* the same due date, so it
+  // could not observe the tie-break at all.
+  const concepts = ['B', 'ZZZ', 'aaa', 'z1', 'm', 'n']
+  const dir = mkdtempSync(join(tmpdir(), 'la-tiebreak-py-'))
+  try {
+    const store = new LearningStore(join(dir, 'js', 'state.json'))
+    store.reset()
+    store.setTopic('tie-break')
+    for (const concept of concepts) store.addReview(concept, `prompt ${concept}`, 'incorrect')
+    const jsOrder = store.priorityReviews(undefined, concepts.length).map(item => item.concept)
+
+    const script = `
+import json, sys
+sys.path.insert(0, ${JSON.stringify(REPO)})
+from learning_accelerator.state import JsonStateStore
+
+store = JsonStateStore(sys.argv[1])
+store.reset()
+store.set_topic('tie-break')
+for concept in json.loads(sys.argv[2]):
+    store.add_review(concept, 'prompt ' + concept, result='incorrect')
+print(json.dumps([item['concept'] for item in store.priority_reviews(limit=99)], ensure_ascii=False))
+`
+    const pyOrder = JSON.parse(execFileSync(
+      'python3',
+      ['-c', script, join(dir, 'py', 'state.json'), JSON.stringify(concepts)],
+      { encoding: 'utf8' },
+    ).trim())
+
+    assert.deepEqual(jsOrder, pyOrder, 'tie-break order diverged from the Python store')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

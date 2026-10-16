@@ -22,7 +22,7 @@ skill 只能"请求"模型去读；插件可以把方法直接放进上下文。
 | `learning_os_protocol.md` 的错误分析 | `ERROR_ANALYSIS_STEPS`，落盘走 `mistake` |
 | `learning_os_protocol.md` 的难度校准 | `DIFFICULTY_SIGNALS` + 内核的"连续两个同向信号移动一档"规则 |
 | `learning_os_protocol.md` 的状态 schema | **不重复**：内核（`lib/learning-store.js`）与 [`schemas/learning_state.schema.json`](../schemas/learning_state.schema.json) 是唯一真源 |
-| `learning_os_protocol.md` 的 CLI 命令 | `learning_record` 的八个 action，见 [`docs/usage.md`](./usage.md) |
+| `learning_os_protocol.md` 的 CLI 命令 | `learning_record` 的九个 action，见 [`docs/usage.md`](./usage.md) |
 
 ## 协议什么时候出现在上下文里
 
@@ -101,7 +101,16 @@ skill 只能"请求"模型去读；插件可以把方法直接放进上下文。
 
 ```
 priority = (到期 ? 20 : 0) + (薄弱概念 ? 30 : 0) + (1 - strength) × 20 + failure_count × 3
+排序键：priority 降序 → due_at 升序 → concept 码点升序
 ```
+
+第三级比较是**码点序**（`compareCodePoints()`），与上游 Python 的 `str` 比较一致，**不是** locale
+排序：`'B' < 'aaa'`，而 `localeCompare` 会给相反结果。并列项（同 priority、同 due_at）一多，这一级
+就是决定"先复习哪一条"的唯一规则。
+
+`learning_due({ limit })` 与 `learning_status({ due_limit })` 默认都返回 5 条，但**可以调大**——
+`limit: 20` 会真的给 20 条（v0.2.1 之前这里的上限被内核的默认值卡成 5，调大无效）。`total_due`
+是整条到期队列的长度，不等于返回条数。
 
 协议只要求一件事：**不要要求学习者复习所有东西，挑 2-5 个高价值项**——最近学的核心概念、反复出错的概念、下一步任务需要的概念、讲不回来的概念。
 
@@ -123,7 +132,7 @@ evidence 追加 signal（内核保留最近 20 条）
 
 ## 与上游的三处有意偏离
 
-1. **持久化是工具，不是 CLI。** 上游的 "Local JSON Persistence" 是一串 `python -m learning_accelerator.cli` 命令；这里同样的操作是 `learning_record` 的八个 action。协议文本里不出现任何 CLI 命令，`tests/protocol.test.js` 有一条断言守着这一点。
+1. **持久化是工具，不是 CLI。** 上游的 "Local JSON Persistence" 是一串 `python -m learning_accelerator.cli` 命令；这里同样的操作是 `learning_record` 的九个 action。协议文本里不出现任何 CLI 命令，`tests/protocol.test.js` 有一条断言守着这一点。
 2. **画像适配按数据分派，不靠模型猜。** 档案里本来就有 `experience_level` 与 `known_skills`，所以 `profileTrack()` 在"零基础日常类比"、"前端对照表"、"初学者补前置"、"有经验直接上工程"、"未知保持保守"之间做选择。上游反复强调的反模式是"对未知背景的人默认他懂前端"，把这件事交给数据比交给概率可靠。判定规则刻意保守：只有明确写出前端 / JS / TS / React / Node 之类技能才给前端对照表，`Java` 不会误判成 `JavaScript`，而 `experience_level: 'no_programming'` 永远优先。
 3. **不复述状态 schema。** 内核拥有 schema，工具按它校验，[`schemas/learning_state.schema.json`](../schemas/learning_state.schema.json) 是给人和 CI 的机器契约。在提示里再抄一份只会多一个会漂移的真源。
 

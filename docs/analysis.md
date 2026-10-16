@@ -206,7 +206,9 @@ carrier 的 `/api` 网关自带浏览器信任栅和 token，但**自定义路�
 priority = (到期 ? 20 : 0) + (薄弱概念 ? 30 : 0) + (1 - strength) × 20 + failure_count × 3
 ```
 
-即"到期 + 薄弱 + 掌握度低 + 反复失败"四者叠加，再按到期日、概念名字典序稳定排序，最后取 limit 条（默认 5）。这解释了协议里"不要把所有东西都拿去复习，挑 2–5 个高价值项"。
+即"到期 + 薄弱 + 掌握度低 + 反复失败"四者叠加，再按到期日、概念名**码点序**稳定排序，最后取 limit 条（默认 5）。这解释了协议里"不要把所有东西都拿去复习，挑 2–5 个高价值项"。
+
+第三级比较必须是码点序（`compareCodePoints()`）而非 `localeCompare`：后者是 locale 排序、大小写不敏感，`'B' < 'aaa'` 在 Python 成立而在 locale 下不成立。这一级不落盘，所以逐字节等价测试看不见它——v0.2.0 就把它漏过去了（见第五部分与 `CHANGELOG.md` v0.2.1）。
 
 ### 2.4 难度校准
 
@@ -349,6 +351,11 @@ cd ~/Desktop/project/github/dsh-plugin-learning-accelerator && node --test tests
 
 其中包括"JS 状态内核与 Python 产物逐字节一致"与"插件卸载后工具与两个提示词上下文全部撤销"两项关键回归。
 
+> v0.2.1 起为 **80 项**。新增的六项针对 v0.2.0 漏掉的一类缺陷：逐字节等价只证明**落盘数据**一致，
+> 证明不了**模型看到的内容**一致。并列项的排序（`localeCompare` vs 码点）、两个工具的 `limit`
+> 上限、`on_date` 的 UTC/本地口径，都不进状态文件，因此等价测试全绿也发现不了；`priority_reviews`
+> 的并列排序就是这样漏过去的。详见 `CHANGELOG.md` 的 v0.2.1 与 `tests/store-equivalence.test.js`。
+
 ### 补充：在"只有已发布依赖"的环境里复现
 
 第 4 部分的真机验证用的是本机 checkout 的 peer 软链。v0.2.0 额外验证了 CI 路径——不依赖本地
@@ -391,6 +398,18 @@ v0.2.0 对齐掉了四类差距：教学协议（`lib/protocol.js` + 第二个�
 | 终端 dashboard 与交互式 TUI | 本插件已有 Web 面板（`conversation.view` tab + 侧边栏到期角标），而且面板跟随会话所在的 state 文件；终端渲染是同一份 `summary()` 的第三种呈现 | 只有当使用者在无 GUI 环境（纯 ACP/headless）里学习时才值得做，且应复用 `panelPayload()` 形状 |
 | `SKILL.md` / `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `.cursor/rules` / `manifest.json` / `skills.sh.json` | 这些是"让另一种 agent 运行时加载这门 skill"的适配层。本插件是 DSH 原生能力：协议进 prompt、状态进内核，不依赖任何宿主去读 markdown | 若要把协议卖给别的运行时，导出 `lib/protocol.js` 的纯函数即可，不需要维护七份 markdown 副本 |
 | `pyproject.toml` / pytest / 覆盖率门（`fail_under = 80`） | 内核已经是 JS；Python 只作为**等价性对照物**存在，CI 把上游 clone 到旁边跑逐字节比对，而不是让它成为本包的运行依赖 | 若要自测覆盖率，用 `node --test --experimental-test-coverage`，并给同类阈值 |
+
+v0.2.1 又补掉了两类**不是有意取舍、而是真的缺**的差距：
+
+1. **`learning_record` 的 `exercise` action**。上游 `exercise complete|fail` 走 `record_exercise()`，
+   那是 `completed_exercises` / `failed_exercises` 的唯一写入口，也是 `exercise_completed` /
+   `exercise_failed` 两个难度信号唯一的自动来源。内核方法在 v0.2.0 就存在且有单测，但**没有任何
+   action 调它**，所以这两个列表对只用工具的 learner 恒为空。见 `CHANGELOG.md` v0.2.1 的 Added。
+2. **tag 触发的发布链路**（`.github/workflows/release.yml`）。上游有 `release.yml`（tag → 测试 →
+   `python -m build` → 上传 dist），v0.2.0 只有 `ci.yml`，即"能验证但不能发布"。现在 `v*` tag 会
+   校验 tag 与 `package.json` 版本一致、跑完整套件（含逐字节等价，上游 clone 到旁边）、`npm pack`
+   并把 tarball 挂到 GitHub Release；带 `NPM_TOKEN` 时另起一个 job 用 `--provenance` 发布到 npm，
+   没有该 secret 就只发 GitHub Release、不静默失败。
 
 一处**故意保留的不一致**：`attempt` 的 `partial` 在落盘时仍按 `fail` 处理（与上游 Python 一致，
 以保证逐字节等价），但返回值里额外保留 `outcome: 'partial'`，让模型不丢失表达力。这是"内核忠实、

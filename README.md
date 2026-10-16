@@ -51,7 +51,7 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 |---|---|
 | Why the plugin exists, and the design decisions behind it | [docs/analysis.md](./docs/analysis.md) |
 | The teaching protocol, long form, with a provenance table for every upstream file | [docs/teaching-protocol.md](./docs/teaching-protocol.md) |
-| Install, configuration, all five tools and eight actions, the panel, troubleshooting | [docs/usage.md](./docs/usage.md) |
+| Install, configuration, all five tools and nine actions, the panel, troubleshooting | [docs/usage.md](./docs/usage.md) |
 | Module map, the injection points, the equivalence guarantee, the trust boundary | [docs/architecture.md](./docs/architecture.md) |
 | Adding a domain, an action, a tool, a prompt block, or the browser half | [docs/extending.md](./docs/extending.md) |
 | Worked examples, from "no prior programming" to project-driven learning | [examples/](./examples) |
@@ -62,9 +62,9 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 | Tool | Purpose |
 |---|---|
 | `learning_status` | Read the whole picture: profile, topic, mastered/weak concepts, due and priority reviews, tasks, difficulty. The entry point for any learning turn. |
-| `learning_due` | The ranked spaced-repetition queue. Ranked by weak-concept status (+30), low strength (`(1-strength)×20`), and repeated failures (+3 each). |
+| `learning_due` | The ranked spaced-repetition queue. Ranked by weak-concept status (+30), low strength (`(1-strength)×20`), and repeated failures (+3 each), ties broken by code point like the Python store. `limit` defaults to 5 and can be raised. |
 | `learning_session` | Onboarding and profile edits: domain, known skills, experience level, goal, target outcome, topic, constraints, next task. Returns the domain's onboarding questions **and the teaching protocol adapted to the profile it just saved**. |
-| `learning_record` | The single write path. Actions: `review_complete`, `review_add`, `concept`, `exercise_spec`, `attempt`, `mistake`, `task`, `evidence`. |
+| `learning_record` | The single write path. Actions: `review_complete`, `review_add`, `concept`, `exercise`, `exercise_spec`, `attempt`, `mistake`, `task`, `evidence`. |
 | `learning_domain` | The static domain template (focus areas, practice types, review strategy, onboarding questions) plus that domain's teaching protocol, with no state required. |
 
 All five return a canonical JSON value, so [Code Mode](https://github.com/deepseek-ai/deepseek-harness)
@@ -134,8 +134,12 @@ The browser half adds:
 - a **`sidebar.footer.action`** entry showing how many reviews are due, with the priority concepts in
   its tooltip.
 
-Both read `GET /learning-accelerator/panel` from the host. They are honest about failure: a missing
-route, a malformed state file, or a dead host renders an explanation instead of an empty frame.
+Both read `GET /learning-accelerator/panel` from the host. The tab **follows the conversation it is
+rendered in**: it reads that session's workspace from the session standard props and passes it as
+`?cwd=`, so switching workspace switches the panel. A request without that hint — the sidebar seat, or a
+composition that does not provide the session kit — leaves the host's own session rule in charge. Both
+are honest about failure: a missing route, a malformed state file, or a dead host renders an
+explanation instead of an empty frame.
 
 ## Configuration
 
@@ -158,16 +162,19 @@ route, a malformed state file, or a dead host renders an explanation instead of 
 ```
 
 A patch row **replaces the whole `config` object** rather than merging into it, so restate every key you
-still want. By default the Web panel follows the most recent session's project; to pin it to one project
-instead — the choice to make when you run several projects from one app and want a fixed panel — add a
-row to `$DSH_HOME/profiles/<profile>/cordis.patch.yml`:
+still want. The Web panel follows the workspace of the conversation it is rendered in, so a multi-project
+app needs no configuration for it. To pin the panel (and every tool call) to one project instead, set an
+explicit `stateFile`:
 
 ```yaml
 - id: learning-accelerator
   name: dsh-plugin-learning-accelerator
   config:
-    root: /absolute/path/to/your/project
+    stateFile: /absolute/path/to/your/project/.learning/state.json
 ```
+
+`root` is **not** a pin: it only answers "which project?" when nothing more specific is known — no
+session, no panel hint — so a session in another workspace still wins over it.
 
 ## State resolution
 
@@ -177,10 +184,11 @@ would silently strand a learner's progress, so it lives in one function
 
 1. an explicit `state_file` argument,
 2. the calling session's working directory (`session.header.cwd`),
-3. the configured `root`,
-4. the process working directory.
+3. the workspace the Web panel reported for the conversation it is rendered in (`?cwd=`),
+4. the configured `root`,
+5. the process working directory.
 
-`scope: user` deliberately short-circuits steps 2–4, because a user-level store is machine-global by
+`scope: user` deliberately short-circuits steps 2–5, because a user-level store is machine-global by
 definition.
 
 ## Layout
@@ -198,7 +206,7 @@ cordis.patch.yml        the bundle layer
 docs/                   analysis (why the design is what it is), teaching protocol, usage, architecture, extending
 schemas/                JSON Schema for .learning/state.json, aligned with the JS kernel
 examples/               the eight upstream examples, rewritten around this plugin's tools
-tests/                  74 tests across 7 files
+tests/                  82 tests across 7 files
 ```
 
 ## Tests
@@ -238,12 +246,13 @@ so that skip cannot happen there; see [`.github/workflows/ci.yml`](./.github/wor
 - **The `conversation.view` tab is the panel's home.** The sidebar seat reports the due count but does
   not open the tab: the view ring is owned by `@deepseek-ai/dsh-client-ui-conversation`, and guessing at
   a "activate this view" API would silently do nothing. The sidebar entry stays useful without it.
-- **The panel follows the learner, not the browser.** A browser request carries no session identity, so
-  the panel cannot ask "which file does this conversation belong to". It uses the most recent session
-  working directory this process resolved, then the configured `root`, then the process directory — and
-  reports the winner in `payload.path`. An explicit `stateFile`, a `root`, or a non-default `scope`
-  still wins over that hint: pin `root` when you want one project's panel regardless of which session
-  ran last, and `scope: user` deliberately stops following sessions at all.
+- **The panel follows the conversation, then the learner.** The `conversation.view` tab asks the page it
+  is rendered in for that session's workspace and sends it as `?cwd=`, so it tracks a workspace switch
+  immediately. A request *without* that hint — the sidebar seat, whose slot has no session identity —
+  falls back to the most recent session working directory this process resolved, then the configured
+  `root`, then the process directory, and the winner is always reported in `payload.path` and
+  `payload.source`. Only an explicit `stateFile` or a non-default `scope` overrides the reported
+  workspace: pin those when you want one project's panel regardless of which conversation is open.
 - **The route is loopback-only and Host-checked.** It exposes one learner's profile and progress, so it
   accepts only requests whose `Host` is loopback, plus a local `Origin` when one is present. It is not
   covered by the carrier's authenticated `/api` gateway, and deliberately not under that prefix.

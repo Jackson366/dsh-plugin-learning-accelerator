@@ -16,19 +16,26 @@ import test from 'node:test'
 
 import { createService } from '../lib/index.js'
 import { panelPayload } from '../lib/panel.js'
-import { PANEL_ROUTE, guardPanelRequest, registerPanelRoute } from '../lib/panel-route.js'
+import {
+  MAX_PANEL_CWD_LENGTH,
+  PANEL_ROUTE,
+  guardPanelRequest,
+  panelCwdFromRequest,
+  registerPanelRoute,
+} from '../lib/panel-route.js'
 
 /**
- * A request-shaped object with just the fields the guard reads.
+ * A request-shaped object with just the fields the guard and the handler read.
  *
  * `host: null` means "send no Host header at all", which is distinct from
- * omitting the option (which takes the default loopback host).
+ * omitting the option (which takes the default loopback host). `url` defaults to
+ * the bare route path, which is what a request with no workspace hint looks like.
  */
-function request({ host = '127.0.0.1:3080', origin, method = 'GET' } = {}) {
+function request({ host = '127.0.0.1:3080', origin, method = 'GET', url = PANEL_ROUTE } = {}) {
   const headers = {}
   if (host !== null) headers.host = host
   if (origin !== undefined) headers.origin = origin
-  return { headers, method }
+  return { headers, method, url }
 }
 
 /** A response recorder implementing the subset the route calls. */
@@ -316,5 +323,129 @@ test('the session-path memory is bounded', () => {
     assert.equal(service.sessionPaths[0], join(dirs.at(-1), '.learning', 'state.json'))
   } finally {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the reported workspace is read from the cwd parameter, not from the path', () => {
+  assert.equal(panelCwdFromRequest({ url: PANEL_ROUTE }), undefined)
+  assert.equal(panelCwdFromRequest({ url: `${PANEL_ROUTE}?cwd=%2Ftmp%2Flearn` }), '/tmp/learn')
+  // `encodeURIComponent` never emits a bare `+`, so a literal `+` reaches the
+  // route as `%2B`; the form-encoded spelling of a space would decode to one,
+  // which is still an absolute path and therefore still accepted.
+  assert.equal(panelCwdFromRequest({ url: `${PANEL_ROUTE}?cwd=%2Ftmp%2Fa%2Bb` }), '/tmp/a+b')
+  assert.equal(panelCwdFromRequest({ url: `${PANEL_ROUTE}?cwd=%2Ftmp%2Fa+b` }), '/tmp/a b')
+  assert.equal(panelCwdFromRequest({ url: `${PANEL_ROUTE}?cwd=%2Ftmp%2Fa&cwd=%2Fetc` }), '/tmp/a')
+  // A full absolute request target is accepted too; only the pathname carries
+  // the route, so the search string still parses.
+  assert.equal(
+    panelCwdFromRequest({ url: `http://127.0.0.1:3080${PANEL_ROUTE}?cwd=%2Ftmp%2Flearn` }),
+    '/tmp/learn',
+  )
+})
+
+test('a cwd hint that is not an absolute path is dropped, not trusted', () => {
+  const rejected = [
+    `${PANEL_ROUTE}?cwd=`, // empty
+    `${PANEL_ROUTE}?cwd=%20%20`, // whitespace only
+    `${PANEL_ROUTE}?cwd=relative%2Fpath`, // relative
+    `${PANEL_ROUTE}?cwd=.%2Fhere`, // relative
+    `${PANEL_ROUTE}?cwd=~%2Flearn`, // a home shorthand, not a path the host can join
+    `${PANEL_ROUTE}?cwd=%2Ftmp%2Fa%00b`, // NUL: a truncated path, never a real one
+    `${PANEL_ROUTE}?cwd=${encodeURIComponent(`/${'x'.repeat(MAX_PANEL_CWD_LENGTH)}`)}`, // over the bound
+    `${PANEL_ROUTE}?cwd=%ZZ`, // undecodable
+  ]
+  for (const url of rejected) {
+    assert.equal(panelCwdFromRequest({ url }), undefined, `accepted ${url}`)
+  }
+  assert.equal(panelCwdFromRequest({}), undefined)
+  assert.equal(panelCwdFromRequest({ url: '' }), undefined)
+  assert.equal(panelCwdFromRequest({ url: 'http://%zz' }), undefined)
+})
+
+test('the panel follows the workspace the browser reports over its own session hint', () => {
+  const sessionDir = mkdtempSync(join(tmpdir(), 'la-panel-ws-session-'))
+  const reported = mkdtempSync(join(tmpdir(), 'la-panel-ws-reported-'))
+  try {
+    const service = createService()
+    service.storeFor({ agent: { session: { header: { cwd: sessionDir } } } })
+
+    // The whole point: the host's own "most recent session" answer is the other
+    // project, and the reported workspace must win over it.
+    const request = service.panelRequest({}, reported)
+    assert.equal(request.cwd, reported)
+    assert.equal(request.stateFile, undefined, 'a reported workspace must not be smuggled in as an explicit file')
+
+    const payload = panelPayload(service, request)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.path, join(reported, '.learning', 'state.json'))
+    assert.equal(payload.source, 'panel-cwd')
+  } finally {
+    rmSync(sessionDir, { recursive: true, force: true })
+    rmSync(reported, { recursive: true, force: true })
+  }
+})
+
+test('an explicit stateFile, a configured scope, or a bad cwd still decides normally', () => {
+  const reported = mkdtempSync(join(tmpdir(), 'la-panel-ws-guard-'))
+  try {
+    const service = createService()
+    // An explicit request is passed through untouched, cwd hint or not.
+    assert.deepEqual(
+      service.panelRequest({ stateFile: '/tmp/explicit.json' }, reported),
+      { stateFile: '/tmp/explicit.json' },
+    )
+    assert.deepEqual(service.panelRequest({ scope: 'user' }, reported), { scope: 'user' })
+    // A relative or missing hint falls through to the host's own resolution
+    // rather than producing a path relative to the process directory.
+    for (const bad of [undefined, '', 'relative/path', 42]) {
+      const request = service.panelRequest({}, bad)
+      assert.equal(request.cwd, undefined, `accepted ${String(bad)}`)
+      assert.notEqual(panelPayload(service, request).source, 'panel-cwd')
+    }
+  } finally {
+    rmSync(reported, { recursive: true, force: true })
+  }
+})
+
+test('a GET with a cwd hint renders that workspace through the route', async () => {
+  const reported = mkdtempSync(join(tmpdir(), 'la-panel-ws-route-'))
+  try {
+    const service = createService()
+    service.storeFor({ cwd: reported }).store.updateProfile({ learning_goal: '面板跟随工作空间' })
+    const carrier = carrierStub()
+    registerPanelRoute(contextStub(carrier), service, { buildPayload: panelPayload })
+
+    const res = createResponse()
+    await carrier.routes[0].handler(
+      request({ url: `${PANEL_ROUTE}?cwd=${encodeURIComponent(reported)}` }),
+      res,
+    )
+    assert.equal(res.record.status, 200)
+    const body = JSON.parse(res.record.body)
+    assert.equal(body.ok, true)
+    assert.equal(body.path, join(reported, '.learning', 'state.json'))
+    assert.equal(body.source, 'panel-cwd')
+    assert.equal(body.profile.learning_goal, '面板跟随工作空间')
+  } finally {
+    rmSync(reported, { recursive: true, force: true })
+  }
+})
+
+test('a rejected cwd hint leaves the route answering from its own session hint', async () => {
+  const sessionDir = mkdtempSync(join(tmpdir(), 'la-panel-ws-fallback-'))
+  try {
+    const service = createService()
+    service.storeFor({ agent: { session: { header: { cwd: sessionDir } } } })
+    const carrier = carrierStub()
+    registerPanelRoute(contextStub(carrier), service, { buildPayload: panelPayload })
+
+    const res = createResponse()
+    await carrier.routes[0].handler(request({ url: `${PANEL_ROUTE}?cwd=not-absolute` }), res)
+    assert.equal(res.record.status, 200)
+    const body = JSON.parse(res.record.body)
+    assert.equal(body.path, join(sessionDir, '.learning', 'state.json'))
+    assert.equal(body.source, 'argument')
+  } finally {
+    rmSync(sessionDir, { recursive: true, force: true })
   }
 })

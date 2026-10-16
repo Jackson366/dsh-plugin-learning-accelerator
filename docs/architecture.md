@@ -223,14 +223,44 @@ real wiring* 与 *an explicitly configured scope still pins the panel*：它们�
 路由、用一个假 request/response 打进去，断言 `payload.path` 是会话的 state 文件（而不是进程目录），
 以及 `scope: 'user'` 时面板仍然被钉住。把 `apply` 那一行改回旧写法，两条测试里必然红一条。
 
+### 面板跟随的是"你看的那个会话"（v0.2.2）
+
+上一节修好的是接线，但留下的语义仍然不够：宿主记住的是"**本进程最近一次解析过 store 的会话**"。用户
+在 GUI 里切工作空间时，只要新工作空间还没跑过一轮对话，这个记忆就还是旧项目——面板于是停在旧空间，
+看起来像"切工作空间没生效"。
+
+根因是"浏览器请求不携带会话身份"这句话被用得太满：**请求**不带，**渲染面板的那个页面**带。
+`conversation.view` 是 `scope: 'session'` 的 slot，`@deepseek-ai/dsh-client-ui-session` 把
+`sessionId`、`useSession`、`useProjection` 合并进 `SessionStandardProps`，把 `useSessions` 等合并进
+`GlobalStandardProps`；而 `SessionListState.byId[sessionId].cwd` 正是运行时自己记的那个会话的工作空间。
+所以浏览器半边能拿到准确答案，缺的只是把它送上去的通道：
+
+- `lib/client.js`：`useSessionWorkspace(props)` 用 `useSessions` 选择当前 `sessionId` 的 `cwd`，
+  `fetchPanel(cwd)` 拼成 `?cwd=`（`encodeURIComponent`）；拿不到就不带这个参数，退回宿主自己的线索。
+- `lib/panel-route.js`：`panelCwdFromRequest()` 把 `?cwd=` 当**页面输入**校验——去空白、限长 4096、
+  拒绝 NUL、必须 `path.isAbsolute()`（即宿主本机拼法）。不合格就返回 `undefined`，请求照常按旧规则
+  解析，而不是让页面指定任意目录。
+- `lib/scope.js`：`resolveStatePath()` 多一档 `cwd`，`source` 记作 `panel-cwd`；位置在会话 cwd 之下、
+  配置 `root` 之上。`panelRequest(explicit, cwd)` 在有上报值时不查 `sessionPaths`。
+
+顺序为什么这样排：显式 `stateFile` 是操作者的决定，最强；会话自己的 cwd 是"这一轮属于谁"的权威；
+面板上报值代表"用户正在看谁"，应当盖过 `root`——`Config.root` 的描述本来就是"会话没有工作目录时"
+才用它。于是 `root` 从来就不是"钉住面板"的开关，README / `docs/usage.md` 里那句旧说法一并改掉了：
+真要钉住就用 `stateFile`，代价是每个工具调用也一起被钉住。
+
+测试分两层：`tests/client-plugin.test.js` 断言渲染在不同 `sessionId` 下发出的 URL 不同（对旧客户端必红），
+`tests/panel-route.test.js` 断言校验规则、优先级、`source` 取值，以及"坏提示回落"这条路。
+
 ### 面板数据形状
 
-`panelPayload()`（`lib/panel.js:23-75`）是浏览器半边的全部数据契约：
+`panelPayload()`（`lib/panel.js:25-77`）是浏览器半边的全部数据契约：
 
 - 成功：`{ ok, generated_at, path, scope, source, profile, topic, difficulty, mastered_concepts,
   weak_concepts, due_reviews, priority_reviews, concept_progress, current_tasks, counts }`；
-- `concept_progress` **最弱在前**排序（`:61-65`），因为面板的职责就是让"下一个该修什么"显而易见；
-- 失败：`{ ok: false, error, path, scope, source, generated_at }`，绝不抛（`:25-34`）。
+- `concept_progress` **最弱在前**排序（`:63-70`），并列时按概念名码点序——与内核 `priorityReviews`
+  的第三级比较共用 `compareCodePoints()`，不是 `localeCompare`；因为面板的职责就是让"下一个该修什么"
+  显而易见；
+- 失败：`{ ok: false, error, path, scope, source, generated_at }`，绝不抛（`:27-36`）。
 
 它是纯函数，所以能在没有 Cordis、没有 HTTP 的情况下单测（`tests/host-plugin.test.js:496-534`），
 任何传输层都能渲染同一个值。

@@ -72,38 +72,42 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 
 ### 把面板钉在一个项目上
 
-同一个应用里跑多个项目时，这是最可靠的写法——在 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`
-里加一行：
+默认不需要配置：`conversation.view` 那个 tab 会跟随**它所在会话的工作空间**，切工作空间就切面板
+（见下面"Web 面板"一节）。只有当你想让面板和所有工具调用都固定在一个项目上时，才在
+`$DSH_HOME/profiles/<profile>/cordis.patch.yml` 里加一行，用 `stateFile` 而不是 `root`：
 
 ```yaml
 - id: learning-accelerator
   name: dsh-plugin-learning-accelerator
   config:
-    root: /absolute/path/to/your/project
+    stateFile: /absolute/path/to/your/project/.learning/state.json
 ```
 
-为什么需要它，见下面"面板显示的不是当前项目"一节。
+`root` **钉不住面板**：它只在"没有更具体的线索"时回答"哪个项目"——面板上报了工作空间、或者会话自带
+cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同时钉住面板和每一个工具调用，这正是
+"固定在一个项目上"的语义，用之前要知道这个代价。
 
 ---
 
 ## 状态文件解析优先级
 
 一个显式优先级链决定一轮对话属于哪个 `.learning/state.json`，实现集中在
-`lib/scope.js:72-89` 的 `resolveStatePath()`：
+`lib/scope.js` 的 `resolveStatePath()`：
 
 | 顺序 | 来源 | `source` 返回值 | 说明 |
 |---|---|---|---|
-| 1 | 工具参数 `state_file` | `argument` | 模型或人显式指定；一次性选择，不会被记成"这个学习者住哪"。 |
-| 2 | 会话工作目录 `session.header.cwd` | `session-cwd` | 只接受绝对路径，相对路径按"没有提示"处理（`lib/scope.js:53-57`）。 |
-| 3 | 配置 `root` | `config-root` | 会话没有 cwd 时使用。 |
-| 4 | 进程工作目录 | `process-cwd` | 兜底。 |
+| 1 | 工具参数 `state_file` / 配置 `stateFile` | `argument` | 模型、人或操作者显式指定；一次性选择，不会被记成"这个学习者住哪"。 |
+| 2 | 会话工作目录 `session.header.cwd` | `session-cwd` | 只接受绝对路径，相对路径按"没有提示"处理（`lib/scope.js` 的 `absolutePath()`）。 |
+| 3 | 面板上报的工作空间 `?cwd=` | `panel-cwd` | 浏览器半边从会话列表里读出当前 tab 所属会话的 cwd 传上来，所以切工作空间面板立刻跟着切。 |
+| 4 | 配置 `root` | `config-root` | 前三条都没有答案时使用。 |
+| 5 | 进程工作目录 | `process-cwd` | 兜底。 |
 
 两个例外：
 
-- **`scope: 'user'` 短路 2–4**（`lib/scope.js:82-84`，`source: 'user-scope'`）。用户级存储按定义就是
+- **`scope: 'user'` 短路 2–5**（`source: 'user-scope'`）。用户级存储按定义就是
   机器全局的，跟任何会话无关。
 - **`scope` 只允许 `project` / `user`**，其它值在 `storeFor()` 里直接抛
-  `learning scope must be one of: project, user`（`lib/scope.js:28,124-126`）。
+  `learning scope must be one of: project, user`（`lib/scope.js`）。
 
 路径形状：项目级是 `<root>/.learning/state.json`，用户级是 `~/.learning-accelerator/state.json`
 （`lib/learning-store.js:23,26-28`；`~` 会展开，`lib/learning-store.js:971-979`）。
@@ -120,7 +124,7 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 | `learning_status` | 读全貌：档案、主题、已掌握/薄弱概念、到期与优先复习、待做练习、近期尝试、任务、难度。任何学习轮次的入口。 |
 | `learning_due` | 排序后的间隔重复队列。 |
 | `learning_session` | Onboarding 与档案修改；返回该领域的 onboarding 问题。 |
-| `learning_record` | 唯一写入路径，八个 action。 |
+| `learning_record` | 唯一写入路径，九个 action。 |
 | `learning_domain` | 静态领域模板（重点、练习形式、复习策略、onboarding 问题）加该领域的教学协议，不需要任何状态。 |
 
 所有工具都接受两个共同参数（`lib/tools.js:27-36`）：
@@ -132,8 +136,8 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 
 | 工具 | 参数 |
 |---|---|
-| `learning_status` | `due_limit`（number，默认 5；只裁剪 `summary.priority_reviews` 的长度，`lib/tools.js:111,117`） |
-| `learning_due` | `on_date`（`YYYY-MM-DD`，默认今天）、`limit`（number，默认 5，`lib/tools.js:141-142,169-170`） |
+| `learning_status` | `due_limit`（number，默认 5；裁剪 `summary.priority_reviews` 的长度，可大于 5，`lib/tools.js:61,111,123`） |
+| `learning_due` | `on_date`（`YYYY-MM-DD`，默认**本地**今天）、`limit`（number，默认 5，可大于 5，`lib/tools.js:176,180`） |
 | `learning_session` | `domain`、`known_skills`（string[]）、`experience_level`、`learning_goal`、`target_outcome`、`current_topic`、`level`、`constraint`、`next_task`、`preferred_language`（`lib/tools.js:205-226`） |
 | `learning_domain` | 只有 `domain`（`lib/tools.js:545-551`） |
 
@@ -147,9 +151,9 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 - `learning_record.difficulty`：`easy`、`normal`、`stretch`（直接展开内核常量
   `EXERCISE_DIFFICULTIES`，`lib/tools.js:347`）。
 
-### `learning_record` 的八个 action
+### `learning_record` 的九个 action
 
-`action` 是必填参数（`lib/tools.js:312-329`）。每个 action 的最小调用如下，参数名逐字对齐代码：
+`action` 是必填参数（`lib/tools.js:324-343`）。每个 action 的最小调用如下，参数名逐字对齐代码：
 
 ```jsonc
 // review_complete：完成一条到期项。review_id 必填，result 默认 correct
@@ -161,9 +165,15 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 // concept：把概念放进 mastered / weak。concept 与 status 都必填
 { "action": "concept", "concept": "effect 作用域", "status": "mastered" }
 
+// exercise：记一次"做完/没做出来"的练习，不建 ExerciseSpec。task 是练习名（必填），
+// exercise_status 默认 completed；它会写 completed_exercises / failed_exercises 并发难度信号
+{ "action": "exercise", "task": "注册一个最小工具", "exercise_status": "completed",
+  "concepts": ["defineTool"], "notes": "跑通了" }
+
 // exercise_spec：落一道练习。工具层不设必填，但内核要求 concepts 非空、task 非空、difficulty 合法
 { "action": "exercise_spec", "topic": "Cordis 插件", "concepts": ["defineTool"], "difficulty": "normal",
-  "task": "注册一个最小工具", "goal": "理解注册即 effect", "evaluation_criteria": ["注册是 effect"] }
+  "task": "注册一个最小工具", "goal": "理解注册即 effect", "input": "const { defineTool } = require('...')",
+  "evaluation_criteria": ["注册是 effect"] }
 
 // attempt：记录作答。exercise_id、attempt_result、整数 score 三者必填
 { "action": "attempt", "exercise_id": "ab12cd34ef56", "answer": "ctx.tools.register(defineTool({...}))",
@@ -185,15 +195,16 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 | action | 做了什么 | 关键细节 |
 |---|---|---|
 | `review_complete` | 归档到 `review_history`、按 `result` 重新调度、移动概念强弱、更新 `concept_progress`、追加难度证据（`lib/learning-store.js:528-560`）。返回被触碰的复习项、概念进度、难度。 | `review_id` 不存在时抛 `review item not found`，不静默成功（`tests/host-plugin.test.js:335-345`）。 |
-| `review_add` | 排一条新复习项，`source` 记为 `manual`（`lib/tools.js:415`）。 | 返回的 `review` 是按确定性 id 读回的同一行，不是猜的（`lib/tools.js:416-420`）。 |
+| `review_add` | 排一条新复习项，`source` 记为 `manual`（`lib/tools.js:435`）。 | 返回的 `review` 是按确定性 id 读回的同一行，不是猜的（`lib/tools.js:438-442`）。 |
 | `concept` | 只调 `recordConcept()`：进目标列表、从另一个列表移除（`lib/learning-store.js:498-512`）。 | 不动 strength，也不排复习。 |
-| `exercise_spec` | 落一条 ExerciseSpec，id 由 `topic+concepts+difficulty+task` 决定（`lib/tools.js:436-455`）。 | `topic` 省略时取当前主题；同样的参数重复提交是 upsert，不会堆积。 |
-| `attempt` | 写 AttemptRecord，并把相关概念排进复习、更新进度与难度证据（`lib/learning-store.js:656-700`）。 | `attempt_result` 是三值枚举，但落盘时 `partial` 折算成 `fail`，原始判断保留在返回值的 `attempt.outcome` 上（`lib/tools.js:461-472`）。 |
-| `mistake` | 一次调用完成：记 `last_code_errors`、把概念标 weak、每个概念排一条复习、各追加一条 `explain_fuzzy` 证据（`lib/tools.js:481-506`）。 | 等价于四次独立写入，这是它存在的全部理由。 |
+| `exercise` | 调 `recordExercise()`：按名字 upsert 进 `completed_exercises` / `failed_exercises`，并发一条 `exercise_completed` / `exercise_failed` 难度信号（`lib/learning-store.js:636-662`）。 | 这是这两个列表**唯一**的写入口，也是这两个信号唯一的自动来源；不需要先建 ExerciseSpec。同名练习是更新，不是新增。 |
+| `exercise_spec` | 落一条 ExerciseSpec，id 由 `topic+concepts+difficulty+task` 决定（`lib/tools.js:474-493`）。 | `topic` 省略时取当前主题；`input` 是给学习者的起始材料（v0.2.1 起可写）；同样的参数重复提交是 upsert，不会堆积。 |
+| `attempt` | 写 AttemptRecord，并把相关概念排进复习、更新进度与难度证据（`lib/learning-store.js:656-700`）。 | `attempt_result` 是三值枚举，但落盘时 `partial` 折算成 `fail`，原始判断保留在返回值的 `attempt.outcome` 上（`lib/tools.js:508-519`）。 |
+| `mistake` | 一次调用完成：记 `last_code_errors`、把概念标 weak、每个概念排一条复习、各追加一条 `explain_fuzzy` 证据（`lib/tools.js:520-545`）。 | 等价于四次独立写入，这是它存在的全部理由。 |
 | `task` | 往 `practice_state.current_tasks` 里 upsert，并同步 legacy 的 `current_project_tasks`（`lib/learning-store.js:470-487`）。 | 同名任务是更新，不是新增。 |
 | `evidence` | 追加一条难度证据（只保留最近 20 条）并按"连续两个同向信号移动一档"重算难度（`lib/learning-store.js:942-968`）。 | 信号只有七种，见下。 |
 
-`signal` 的七种取值，分极性（`lib/tools.js:359-363`，`lib/learning-store.js:51-63`）：
+`signal` 的七种取值，分极性（`lib/tools.js:379-383`，`lib/learning-store.js:51-63`）：
 
 - 正向：`exercise_completed`、`recall_correct`、`explain_correct`
 - 负向：`exercise_failed`、`recall_incorrect`、`explain_fuzzy`、`setup_failed`
@@ -210,8 +221,8 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 | `third_correct` | 7 天 | strength +0.2，streak +1，概念 → mastered |
 | `incorrect` / `fuzzy` | 0 天 | strength −0.2，streak 归零，failure_count +1，概念 → weak |
 
-读路径的排序权重是"到期 +20、薄弱 +30、`(1-strength)×20`、失败次数 ×3"，再按到期日与概念名字典序
-稳定排序（`lib/learning-store.js:579-601`）。
+读路径的排序权重是"到期 +20、薄弱 +30、`(1-strength)×20`、失败次数 ×3"，再按到期日与概念名**码点序**
+稳定排序（`lib/learning-store.js:612-634`）。`limit` / `due_limit` 默认 5 但可调大。
 
 ---
 
@@ -262,8 +273,17 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 | `conversation.view` | `learning` | 30 | 会话区的"学习"tab，渲染档案、优先复习队列、薄弱点、概念强度条、下一步任务。 |
 | `sidebar.footer.action` | `learning` | 100 | 侧边栏底部入口，显示到期数量角标，tooltip 里是优先概念。它拿到 owner props `{ wide }`，宽窄两种形态都渲染。 |
 
-两个 seat 都从 `GET /learning-accelerator/panel` 取数（路由常量 `lib/panel-route.js:116`，客户端镜像在
-`lib/client.js:41`）。这个路由：
+两个 seat 都从 `GET /learning-accelerator/panel` 取数（路由常量在 `lib/panel-route.js`，客户端镜像在
+`lib/client.js`）。`conversation.view` 的请求会带一个 `?cwd=`，值就是**当前会话的工作空间**：它从
+slot 的标准 props 里拿 `sessionId`，再用 `useSessions` 在会话列表里查 `byId[sessionId].cwd`
+（`@deepseek-ai/dsh-client-ui-session` 把这两个成员合并进 `SessionStandardProps` /
+`GlobalStandardProps`，每个会话级 slot 都能拿到）。这是"切工作空间面板就跟着切"的全部机制：
+浏览器请求本身不带会话身份，页面知道。`sidebar.footer.action` 这个 seat 没有会话身份，所以不带
+`?cwd=`，走宿主的"最近解析过的会话"兜底。
+
+服务端把 `?cwd=` 当**页面输入**校验（`panelCwdFromRequest()`）：必须是宿主本机拼法的绝对路径，空的、
+相对的、含 NUL 的、超长的、解不出来的全部丢弃并回落到宿主自己的会话线索，而不是让请求随便指一个
+目录。这个路由：
 
 - 只接受 GET 与 HEAD，其它方法 `405` 并带 `Allow: GET, HEAD`（`lib/panel-route.js:149-153`）；
 - 成功时 `200` + `cache-control: no-store`（面板是实时状态，缓存会看到过期队列，`lib/panel-route.js:92-101`）；

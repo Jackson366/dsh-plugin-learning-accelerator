@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-learning-accelerator",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "A DeepSeek Harness plugin that turns Learning-Accelerator's General Learning OS into harness-native capability: the teaching protocol in the prompt, durable learner state, deterministic spaced repetition, model-callable tools, and a Web UI panel.",
   "type": "module",
   "engines": {

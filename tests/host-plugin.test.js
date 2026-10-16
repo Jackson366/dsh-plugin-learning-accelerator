@@ -689,3 +689,179 @@ test('injectPromptContext and injectProtocol are independent switches', async ()
     methodOnly.cleanup()
   }
 })
+
+/** Seed `count` due-today review items directly through the kernel. */
+function seedDueReviews(harness, count) {
+  const store = new LearningStore(join(harness.dir, '.learning', 'state.json'))
+  store.reset()
+  store.setTopic('limit regression')
+  for (let index = 0; index < count; index += 1) {
+    // `incorrect` schedules at 0 days, so every item is due today.
+    store.addReview(`concept-${index}`, `prompt ${index}`, 'incorrect')
+  }
+  return store
+}
+
+test('learning_due honours a limit above the kernel default of five', async () => {
+  // The kernel's `summary()` hardcodes `priorityReviews(limit = 5)`, so a tool
+  // that sliced that 5-item list could never return more. Regression guard: the
+  // tools rank the full queue through the store instead.
+  const harness = await mountPlugin()
+  try {
+    seedDueReviews(harness, 7)
+
+    const defaulted = await run(harness, 'learning_due', {})
+    assert.equal(defaulted.total_due, 7, 'total_due must count the whole queue')
+    assert.equal(defaulted.items.length, 5, 'the default limit is five')
+
+    const widened = await run(harness, 'learning_due', { limit: 20 })
+    assert.equal(widened.items.length, 7, 'limit must be able to exceed five')
+
+    const narrowed = await run(harness, 'learning_due', { limit: 2 })
+    assert.equal(narrowed.items.length, 2, 'limit must still narrow')
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('learning_status due_limit is not silently capped at five', async () => {
+  const harness = await mountPlugin()
+  try {
+    seedDueReviews(harness, 7)
+
+    const widened = await run(harness, 'learning_status', { due_limit: 20 })
+    assert.equal(widened.summary.priority_reviews.length, 7)
+
+    const defaulted = await run(harness, 'learning_status', {})
+    assert.equal(defaulted.summary.priority_reviews.length, 5)
+
+    const narrowed = await run(harness, 'learning_status', { due_limit: 1 })
+    assert.equal(narrowed.summary.priority_reviews.length, 1)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('learning_due reports a local calendar date, not a UTC one', async () => {
+  // The kernel decides due-ness with a local `todayIso()`; echoing a UTC
+  // `toISOString()` slice here would name a different day for part of the day.
+  const harness = await mountPlugin()
+  try {
+    seedDueReviews(harness, 1)
+    const now = new Date()
+    const local = [
+      String(now.getFullYear()).padStart(4, '0'),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0'),
+    ].join('-')
+
+    const value = await run(harness, 'learning_due', {})
+    assert.equal(value.on_date, local)
+    if (now.getTimezoneOffset() !== 0) {
+      // Guards the regression itself: in any non-UTC zone the two derivations
+      // disagree for part of the day, so this assertion has teeth where it runs.
+      assert.notEqual(value.on_date, now.toISOString().slice(0, 10))
+    }
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('exercise_spec persists the input field the schema declares', async () => {
+  const harness = await mountPlugin()
+  try {
+    await run(harness, 'learning_session', { current_topic: 'DSH 插件' })
+    const recorded = await run(harness, 'learning_record', {
+      action: 'exercise_spec',
+      topic: 'DSH 插件',
+      concepts: ['defineTool'],
+      difficulty: 'normal',
+      task: '给 greet 工具加一个参数',
+      input: 'ctx.tools.register(defineTool({ name: "greet" }))',
+    })
+    assert.equal(recorded.exercise.input, 'ctx.tools.register(defineTool({ name: "greet" }))')
+    // `defineTool` normalizes the shorthand parameter map into JSON Schema, so
+    // the declared field lives under `properties`.
+    assert.ok(
+      'input' in harness.tools.get('learning_record').parameters.properties,
+      'learning_record must expose `input`',
+    )
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('the exercise action reaches recordExercise and emits a difficulty signal', async () => {
+  // `recordExercise` is the only writer of `completed_exercises` /
+  // `failed_exercises`, and it is what turns a finished practice into an
+  // `exercise_completed` / `exercise_failed` signal. Before v0.2.1 no action
+  // reached it, so both lists stayed empty for a tool-only learner.
+  const harness = await mountPlugin()
+  try {
+    const done = await run(harness, 'learning_record', {
+      action: 'exercise',
+      task: '注册一个最小工具',
+      exercise_status: 'completed',
+      concepts: ['defineTool'],
+      notes: '跑通了',
+    })
+    assert.equal(done.exercise_status, 'completed')
+    assert.equal(done.exercise_record.completed_exercises.length, 1)
+    assert.equal(done.exercise_record.failed_exercises.length, 0)
+    assert.equal(done.exercise_record.completed_exercises[0].name, '注册一个最小工具')
+    assert.equal(done.exercise_record.completed_exercises[0].status, 'completed')
+
+    const failed = await run(harness, 'learning_record', {
+      action: 'exercise',
+      task: '卸载 cleanup 不生效',
+      exercise_status: 'failed',
+    })
+    assert.equal(failed.exercise_record.completed_exercises.length, 1)
+    assert.equal(failed.exercise_record.failed_exercises.length, 1)
+
+    // Both practice logs are upserts by name: re-logging must not pile up.
+    await run(harness, 'learning_record', {
+      action: 'exercise',
+      task: '注册一个最小工具',
+      exercise_status: 'completed',
+    })
+    const state = new LearningStore(join(harness.dir, '.learning', 'state.json')).load()
+    assert.equal(state.practice_state.completed_exercises.length, 1)
+
+    // One completed + one failed is a mixed window, so difficulty holds.
+    assert.equal(state.difficulty_state.next_adjustment, 'same')
+    // The signal really was appended.
+    assert.deepEqual(
+      state.difficulty_state.evidence.map(entry => entry.signal),
+      ['exercise_completed', 'exercise_failed', 'exercise_completed'],
+    )
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('exercise requires a name and a legal status', async () => {
+  const harness = await mountPlugin()
+  try {
+    await assert.rejects(
+      () => run(harness, 'learning_record', { action: 'exercise' }),
+      /exercise requires task/,
+    )
+    // The harness validates declared parameters before `execute` runs, so an
+    // illegal status never reaches the store's own guard. That is the stronger
+    // guarantee, and it is what the model actually experiences.
+    await assert.rejects(
+      () => run(harness, 'learning_record', {
+        action: 'exercise',
+        task: 'x',
+        exercise_status: 'maybe',
+      }),
+      /"exercise_status" must be one of \["completed","failed"\]/,
+    )
+    const properties = harness.tools.get('learning_record').parameters.properties
+    assert.deepEqual(properties.exercise_status.enum, ['completed', 'failed'])
+    assert.ok(properties.action.enum.includes('exercise'))
+  } finally {
+    harness.cleanup()
+  }
+})
