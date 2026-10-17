@@ -5,8 +5,10 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin tha
 "a prompt the agent may follow" into harness-native capability: the teaching protocol in the prompt,
 durable learner state, deterministic spaced repetition, model-callable tools, and a Web panel.
 
-It is written in **plain JavaScript with no build step** — on both halves. The host half is an ESM
-Cordis plugin; the browser half is a classic script the module table loads directly.
+It is written in **plain JavaScript**. The host half is an ESM Cordis plugin with no build step. The
+browser half is a classic script the module table loads directly, assembled from `lib/client/` by
+`scripts/build-client.mjs` — the host serves exactly one bundle file per package, so that
+concatenation is the most the platform allows.
 
 ---
 
@@ -197,22 +199,31 @@ definition.
 lib/learning-store.js   state kernel + spaced repetition, a faithful port of state.py
 lib/protocol.js         the teaching protocol (pure data + pure builders, ported from the three upstream markdown files)
 lib/scope.js            scope resolution + the caching host service, and both injection texts
-lib/tools.js            the five model-facing tools
+lib/tools/              one file per tool (status, due, session, record, domain); index.js registers them
 lib/panel.js            the pure panel payload builder (panel follows the learner)
 lib/panel-route.js      the panel HTTP route and its request guard
 lib/index.js            the Cordis plugin entry: service, tools, two prompt contexts, route
-lib/client.js           the browser half (classic script, no build)
+lib/client.js           the browser half — GENERATED from lib/client/, do not edit
+lib/client/             its source fragments: strings, styles, format, presenters, panel, sidebar
+scripts/build-client.mjs  concatenates lib/client/ into the single bundle the host serves
 cordis.patch.yml        the bundle layer
 docs/                   analysis (why the design is what it is), teaching protocol, usage, architecture, extending
 schemas/                JSON Schema for .learning/state.json, aligned with the JS kernel
 examples/               the eight upstream examples, rewritten around this plugin's tools
-tests/                  100 tests across 7 files
+tests/                  106 tests across 8 files
 ```
 
 ## Tests
 
 ```sh
-node --test tests/
+node --test tests/*.test.js
+```
+
+`tests/client-build.test.js` fails when `lib/client.js` is stale relative to
+`lib/client/*.js`. After editing a fragment, regenerate the bundle:
+
+```sh
+node scripts/build-client.mjs   # or: npm run build
 ```
 
 No test framework is installed: everything uses `node:test`. The suite covers

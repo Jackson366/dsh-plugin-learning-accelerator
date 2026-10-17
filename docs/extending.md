@@ -45,7 +45,7 @@ music: '以听辨与跟练为主，一次只推进一个小节；用录音复盘
 
 `composeTeachingProtocol()` 用它拼协议里的"领域适配"段（`lib/protocol.js:263,323-324`）。
 
-### 3. `lib/tools.js:210` 与 `lib/tools.js:548` — 两个 `enum`
+### 3. `lib/tools/session.js` 与 `lib/tools/domain.js` — 两个 `enum`
 
 同一个枚举写了两遍：`learning_session` 的 `domain` 与 `learning_domain` 的 `domain`。两处都要加
 `'music'`。
@@ -72,17 +72,17 @@ music: '以听辨与跟练为主，一次只推进一个小节；用录音复盘
 
 `learning_record` 是唯一写入路径，所以加 action 等于扩写路径。五个编辑点：
 
-### 1. `lib/tools.js:312-329` — 把 action 名加进 `action.enum`
+### 1. `lib/tools/record.js` 的 `action.enum` — 把 action 名加进去
 
 `action` 是唯一带 `required: true` 的参数。若新 action 需要新参数，同时加进
-`lib/tools.js:309-365` 的 `parameters`：
+`lib/tools/record.js` 的 `parameters`：
 
 - 数组参数要写 `{ type: 'array', items: { type: 'string' } }`（照 `concepts` / `constraints`）；
 - 必填参数写 `required: true`（照 `action`）；
-- 能用内核常量就别手抄字面量：`difficulty` 是 `enum: [...EXERCISE_DIFFICULTIES]`（`lib/tools.js:347`），
+- 能用内核常量就别手抄字面量：`difficulty` 是 `enum: [...EXERCISE_DIFFICULTIES]`（`lib/tools/record.js`），
   而 `signal` 是手抄的七项（`:359-363`）——前者是正确示范。
 
-### 2. `lib/tools.js:399-522` — 加 `case`
+### 2. `lib/tools/record.js` 的 `execute` — 加 `case`
 
 固定三步：先做自己的必填检查（现有写法是 `throw new Error('<action> requires <param>')`），再调 store
 的公开方法落盘，最后只把"改了什么"挂到 `payload` 上。
@@ -93,14 +93,14 @@ music: '以听辨与跟练为主，一次只推进一个小节；用录音复盘
   （`node_modules/@deepseek-ai/dsh-tools/src/index.ts:1839-1844`）。所以不要返回 store 的活对象，
   也不要指望之后还能改它。
 - **要读回"刚写进去的那一行"，就用确定性 id 重算**，不要猜是最后一条：范例见
-  `lib/tools.js:416-420`（`stableId('review', concept, prompt)`）与 `:452-455`
+  `lib/tools/record.js`（`stableId('review', concept, prompt)` 与 `stableId('exercise-spec', ...)` 两处）
   （`stableId('exercise-spec', ...)`）。
 
-### 3. `lib/tools.js:368-389` — `render` 文案
+### 3. `lib/tools/record.js` 的 `output.render` — 文案
 
 规范值保持不变，把人类/模型要读的解释写在这里。字段块已经是可复用的（`value.review` / `value.exercise` /
 `value.attempt` / `value.concept_progress` / `value.difficulty`），新 action 通常加一个 `if` 块。
-`presentationMeta`（`:390-392`）一般不用动。
+`presentationMeta`一般不用动。
 
 ### 4. `lib/protocol.js:306-308` — 协议里的 action 清单
 
@@ -119,8 +119,8 @@ music: '以听辨与跟练为主，一次只推进一个小节；用录音复盘
 
 ### 步骤
 
-1. 在 `registerLearningTools()`（`lib/tools.js:48`）里加一个 `ctx.tools.register(defineTool({...}))`。
-   `ctx.tools.register` 的 disposer 自动挂到当前 fiber，不需要手写清理（`lib/tools.js:38-47`）。
+1. 在 `registerLearningTools()`（`lib/tools/index.js`）的 `TOOLS` 数组里加你的工厂。
+   `ctx.tools.register` 的 disposer 自动挂到当前 fiber，不需要手写清理。
 2. 五个必需件：`name` / `description` / `parameters` / `output.schema` / `output.render` / `execute`
    （`presentCall` / `presentResult` 可选但本项目每个工具都写了）。
 3. 依赖的 harness 服务不用另外声明：`tools` 已经在 `lib/index.js:47` 的 `inject` 里。
@@ -134,7 +134,7 @@ music: '以听辨与跟练为主，一次只推进一个小节；用录音复盘
 | `presentCall` / `presentResult` 必须是**纯函数** | UI 会在实时流式**和会话日志回放**两种场景下调用它们，所以只能依赖 `args` 与耐久的结果投影。 | `node_modules/@deepseek-ai/dsh-tools/src/schema.ts:283-299` |
 
 本项目里这三条都有现成范例：`learning_status` 的 `output.schema: { type: 'json' }` + 中文
-`render`（`lib/tools.js:63-107`），以及只读 `args` / `result.content` 的 presenter（`:121-127`）。
+`render` 与只读 `args` / `result.content` 的 presenter（范例见 `lib/tools/status.js`）。
 
 ### 必须同步的硬编码（不改就红）
 

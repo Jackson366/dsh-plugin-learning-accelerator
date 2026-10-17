@@ -90,6 +90,46 @@ findings were not taste — the stylesheet was not doing what it said.
   the tests build and its tree is serialized, with the "before" column taken from
   `git show HEAD:lib/client.js`.
 
+### Fixed — the panel at narrow widths
+
+- **The question and the concept name were the first things to disappear.** A
+  clipping probe (`scrollWidth > clientWidth`) measured the panel across widths:
+  the review question started losing characters at a ~480px panel and the concept
+  name at ~380px — which is an ordinary split-view width, and the question is the
+  thing the learner is meant to answer. The layout was prioritising a fixed 88px
+  decorative gauge over the content. Below a 520px container the question now
+  wraps, the gauge goes full width under the concept name, the fact labels stack
+  above their values, and the timestamp steps out. Re-measured: nothing but the
+  state-file path clips at any width from 320px up, and that one is deliberate
+  (it carries the full value in `title`).
+- **`学习档案` was printed twice.** One key titled the section and also labelled
+  the state-file path, so the same words appeared on one screen meaning two
+  different things. The section is now `panel.profile` and the path label is
+  `panel.file` ("状态文件" / "State file").
+- **One visual device, one meaning.** The strength bar is monochrome again and
+  encodes magnitude only; "weak" is a separate mark next to the concept name, and
+  "mastered" is the green `Tag`. Previously the bar was tinted by status, which
+  made it answer two questions at once — and the amber sat at 2.15:1 on a light
+  surface, below the 3:1 non-text threshold, so it was not a valid signal anyway.
+  The mark is `aria-hidden`; the failure count already says it in words.
+
+### Changed — source layout
+
+- **`lib/client.js` is generated.** It had grown to 862 lines mixing six
+  responsibilities. The host resolves exactly one `./client` file per package
+  (`clientExportOf`, and `dsh.client` has no multi-entry field), so the split had
+  to happen at build time: the source now lives in `lib/client/` as six fragments
+  (strings, styles, format, presenters, panel, sidebar), each under 400 lines, and
+  `scripts/build-client.mjs` concatenates them. `tests/client-build.test.js`
+  fails when the committed bundle is stale, verified by mutating a fragment.
+- **`lib/tools.js` is now `lib/tools/`**, one file per tool plus a registry. The
+  five tools shared nothing but two parameter nodes, so splitting removed the need
+  to scroll past four schemas to read the fifth.
+- No hand-written file exceeds 400 lines except `lib/learning-store.js`, which is
+  deliberately kept as a 1:1 mirror of the upstream Python store because the
+  byte-equivalence suite compares the two implementations. A test now encodes that
+  exemption so it cannot quietly grow into a third exception.
+
 ### Tests
 
 - `tests/client-plugin.test.js` gains three cases for the workspace hint: the tab
@@ -108,7 +148,7 @@ findings were not taste — the stylesheet was not doing what it said.
   `source: "panel-cwd"`; an explicit `stateFile`, a configured `scope`, or a bad
   hint still decides normally; and the route renders a reported workspace end to
   end while a rejected hint falls back to the session path.
-- Suite: 100 tests, 100 pass, 0 skipped (up from 82).
+- Suite: 106 tests, 106 pass, 0 skipped (up from 82).
 
 ## v0.2.1
 

@@ -1,7 +1,7 @@
 # 使用指南
 
 面向"把插件装进桌面端、然后拿它学东西"的人。本文里出现的每个默认值、参数名和枚举都取自代码：
-`lib/index.js:50-70` 的 `Config`、`lib/tools.js` 的工具定义、`lib/scope.js:72-89` 的解析函数。
+`lib/index.js:50-70` 的 `Config`、`lib/tools/` 的工具定义、`lib/scope.js:72-89` 的解析函数。
 不在代码里存在的东西，这里不写。
 
 ---
@@ -127,33 +127,33 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 | `learning_record` | 唯一写入路径，九个 action。 |
 | `learning_domain` | 静态领域模板（重点、练习形式、复习策略、onboarding 问题）加该领域的教学协议，不需要任何状态。 |
 
-所有工具都接受两个共同参数（`lib/tools.js:27-36`）：
+所有工具都接受两个共同参数（`lib/tools/shared.js`）：
 
 - `state_file`：状态文件路径；省略则用会话工作目录下的 `.learning/state.json`。
 - `scope`：`project`（默认）或 `user`。
 
-其它参数逐个如下（都从 `lib/tools.js` 抄写）：
+其它参数逐个如下（都从 `lib/tools/` 抄写）：
 
 | 工具 | 参数 |
 |---|---|
-| `learning_status` | `due_limit`（number，默认 5；裁剪 `summary.priority_reviews` 的长度，可大于 5，`lib/tools.js:61,111,123`） |
-| `learning_due` | `on_date`（`YYYY-MM-DD`，默认**本地**今天）、`limit`（number，默认 5，可大于 5，`lib/tools.js:176,180`） |
-| `learning_session` | `domain`、`known_skills`（string[]）、`experience_level`、`learning_goal`、`target_outcome`、`current_topic`、`level`、`constraint`、`next_task`、`preferred_language`（`lib/tools.js:205-226`） |
-| `learning_domain` | 只有 `domain`（`lib/tools.js:545-551`） |
+| `learning_status` | `due_limit`（number，默认 5；裁剪 `summary.priority_reviews` 的长度，可大于 5，`lib/tools/status.js`） |
+| `learning_due` | `on_date`（`YYYY-MM-DD`，默认**本地**今天）、`limit`（number，默认 5，可大于 5，`lib/tools/due.js`） |
+| `learning_session` | `domain`、`known_skills`（string[]）、`experience_level`、`learning_goal`、`target_outcome`、`current_topic`、`level`、`constraint`、`next_task`、`preferred_language`（`lib/tools/session.js`） |
+| `learning_domain` | 只有 `domain`（`lib/tools/domain.js`） |
 
 枚举也照抄，别凭记忆：
 
 - `learning_session.domain` / `learning_domain.domain`：`general`、`technology`、`language`、`exam`、
-  `writing`、`communication`（`lib/tools.js:210,548`）。
+  `writing`、`communication`（`lib/tools/session.js` 与 `lib/tools/domain.js`）。
 - `learning_session.experience_level`：`unknown`、`no_programming`、`beginner`、`intermediate`、
-  `advanced`（`lib/tools.js:216`）。
-- `learning_session.level`：`beginner`、`intermediate`、`advanced`（`lib/tools.js:222`）。
+  `advanced`（`lib/tools/session.js`）。
+- `learning_session.level`：`beginner`、`intermediate`、`advanced`（`lib/tools/session.js`）。
 - `learning_record.difficulty`：`easy`、`normal`、`stretch`（直接展开内核常量
-  `EXERCISE_DIFFICULTIES`，`lib/tools.js:347`）。
+  `EXERCISE_DIFFICULTIES`，`lib/tools/record.js`）。
 
 ### `learning_record` 的九个 action
 
-`action` 是必填参数（`lib/tools.js:324-343`）。每个 action 的最小调用如下，参数名逐字对齐代码：
+`action` 是必填参数（`lib/tools/record.js`）。每个 action 的最小调用如下，参数名逐字对齐代码：
 
 ```jsonc
 // review_complete：完成一条到期项。review_id 必填，result 默认 correct
@@ -195,16 +195,16 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 | action | 做了什么 | 关键细节 |
 |---|---|---|
 | `review_complete` | 归档到 `review_history`、按 `result` 重新调度、移动概念强弱、更新 `concept_progress`、追加难度证据（`lib/learning-store.js:528-560`）。返回被触碰的复习项、概念进度、难度。 | `review_id` 不存在时抛 `review item not found`，不静默成功（`tests/host-plugin.test.js:335-345`）。 |
-| `review_add` | 排一条新复习项，`source` 记为 `manual`（`lib/tools.js:435`）。 | 返回的 `review` 是按确定性 id 读回的同一行，不是猜的（`lib/tools.js:438-442`）。 |
+| `review_add` | 排一条新复习项，`source` 记为 `manual`（`lib/tools/record.js`）。 | 返回的 `review` 是按确定性 id 读回的同一行，不是猜的（`lib/tools/record.js`）。 |
 | `concept` | 只调 `recordConcept()`：进目标列表、从另一个列表移除（`lib/learning-store.js:498-512`）。 | 不动 strength，也不排复习。 |
 | `exercise` | 调 `recordExercise()`：按名字 upsert 进 `completed_exercises` / `failed_exercises`，并发一条 `exercise_completed` / `exercise_failed` 难度信号（`lib/learning-store.js:636-662`）。 | 这是这两个列表**唯一**的写入口，也是这两个信号唯一的自动来源；不需要先建 ExerciseSpec。同名练习是更新，不是新增。 |
-| `exercise_spec` | 落一条 ExerciseSpec，id 由 `topic+concepts+difficulty+task` 决定（`lib/tools.js:474-493`）。 | `topic` 省略时取当前主题；`input` 是给学习者的起始材料（v0.2.1 起可写）；同样的参数重复提交是 upsert，不会堆积。 |
-| `attempt` | 写 AttemptRecord，并把相关概念排进复习、更新进度与难度证据（`lib/learning-store.js:656-700`）。 | `attempt_result` 是三值枚举，但落盘时 `partial` 折算成 `fail`，原始判断保留在返回值的 `attempt.outcome` 上（`lib/tools.js:508-519`）。 |
-| `mistake` | 一次调用完成：记 `last_code_errors`、把概念标 weak、每个概念排一条复习、各追加一条 `explain_fuzzy` 证据（`lib/tools.js:520-545`）。 | 等价于四次独立写入，这是它存在的全部理由。 |
+| `exercise_spec` | 落一条 ExerciseSpec，id 由 `topic+concepts+difficulty+task` 决定（`lib/tools/record.js`）。 | `topic` 省略时取当前主题；`input` 是给学习者的起始材料（v0.2.1 起可写）；同样的参数重复提交是 upsert，不会堆积。 |
+| `attempt` | 写 AttemptRecord，并把相关概念排进复习、更新进度与难度证据（`lib/learning-store.js:656-700`）。 | `attempt_result` 是三值枚举，但落盘时 `partial` 折算成 `fail`，原始判断保留在返回值的 `attempt.outcome` 上（`lib/tools/record.js`）。 |
+| `mistake` | 一次调用完成：记 `last_code_errors`、把概念标 weak、每个概念排一条复习、各追加一条 `explain_fuzzy` 证据（`lib/tools/record.js`）。 | 等价于四次独立写入，这是它存在的全部理由。 |
 | `task` | 往 `practice_state.current_tasks` 里 upsert，并同步 legacy 的 `current_project_tasks`（`lib/learning-store.js:470-487`）。 | 同名任务是更新，不是新增。 |
 | `evidence` | 追加一条难度证据（只保留最近 20 条）并按"连续两个同向信号移动一档"重算难度（`lib/learning-store.js:942-968`）。 | 信号只有七种，见下。 |
 
-`signal` 的七种取值，分极性（`lib/tools.js:379-383`，`lib/learning-store.js:51-63`）：
+`signal` 的七种取值，分极性（`lib/tools/record.js`，`lib/learning-store.js:51-63`）：
 
 - 正向：`exercise_completed`、`recall_correct`、`explain_correct`
 - 负向：`exercise_failed`、`recall_incorrect`、`explain_fuzzy`、`setup_failed`
@@ -257,8 +257,8 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 
 第一次在一个新目录里说"教我 X"时，状态文件还不存在，两个注入块都是空的。为了让方法仍然到场，
 `learning_domain` 与 `learning_session` 在返回值里各带一份 `teaching_protocol`
-（`lib/tools.js:283-287,578-582`），并且 `output.render` 会把它渲染进给模型看的正文
-（`lib/tools.js:241,565`）。这条链路有单独的测试守着（`tests/host-plugin.test.js:421-445`）。
+（`lib/tools/session.js` 与 `lib/tools/domain.js`），并且 `output.render` 会把它渲染进给模型看的正文
+（`lib/tools/session.js` 与 `lib/tools/domain.js`）。这条链路有单独的测试守着（`tests/host-plugin.test.js:421-445`）。
 
 换句话说：**协议永远到得了，状态只在有状态时才到。**
 
@@ -358,7 +358,7 @@ carrier 的 `/api` 前缀是它自己的鉴权网关，自带浏览器信任栅�
 
 读工具不会毁掉一整轮：`summarize()` 捕获解析错误并返回 `{ ok: false, error, path }`
 （`lib/scope.js:215-245`），`learning_status` 的渲染器会提示"先用 write 修回合法 JSON 再继续"
-（`lib/tools.js:66-72`），面板同样渲染这条错误。内核的 `validate()` 还会补齐缺失字段并强制
+（`lib/tools/status.js`），面板同样渲染这条错误。内核的 `validate()` 还会补齐缺失字段并强制
 `schema_version`（`lib/learning-store.js:816-841`），所以手工加字段是安全的，写坏 JSON 语法才会报错。
 
 ### 同一份状态文件被两个会话共享，正常吗

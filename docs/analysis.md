@@ -250,7 +250,7 @@ review_result = "correct" if result == "pass" else "incorrect"
 | 工具返回值是程序 API，正文是给人看的 | 五个工具都返回结构化 JSON；解释性文案全部放在 `output.render` |
 | 写入路径越多，越容易写出不一致的状态 | `learning_record` 是唯一写入工具，`action` 枚举分派；每次返回"改了什么"而不是"成功" |
 | 读路径不该因为文件被手改坏就毁掉一整轮 | 读工具捕获解析错误，返回 `{ ok: false, error }` 让面板和模型都能解释并修复 |
-| 客户端半边无构建、无 `@Remote` | 用 `webServer` 路由 + 浏览器 `fetch`；客户端 bundle 是 classic script |
+| 客户端半边没有 `@Remote` | 用 `webServer` 路由 + 浏览器 `fetch`；客户端 bundle 是 classic script。源按职责拆在 `lib/client/`，由 `scripts/build-client.mjs` 合成单文件——宿主每包只服务一个 bundle |
 | 自建路由等于自建信任边界 | Host/Origin 双重校验；测试里显式覆盖 DNS rebinding 场景 |
 | 可选依赖探测会静默失败 | 用嵌套 `ctx.inject(['webServer'])` 等待，而不是 `ctx.get` 探测 |
 | Cordis 会按 `inject` 门禁服务读取 | 服务实例在 `apply` 里构造一次，工具与提示词回调**闭包引用**该实例，避免在非 fiber 上下文里读 `ctx.<service>` |

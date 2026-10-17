@@ -34,7 +34,7 @@ Cordis 接受三种插件形状（函数 / 对象 / Service 子类）。本插�
 | `lib/index.js:144-212` | 对象形状：导出 `name` / `inject` / `Config` / `apply(ctx, config)` | 需要一个 `Config` schema 来声明默认值，并需要一个地方把共享的 service 实例造一次。 |
 | `lib/index.js:86-121` + `:152-154` | `Service` 子类 `LearningAccelerator` | 让别的插件能通过 `ctx.learningAccelerator` 读到同一份缓存 store，而不是各自重写 scope 解析（`lib/index.js:148-151`）。 |
 | `lib/index.js:160-193`、`lib/panel-route.js:136-175` | 嵌套 `ctx.inject(...)` | 声明"可选依赖"，见下面第四节。 |
-| `lib/client.js:373-403` | 对象插件 `{ name, inject, apply }` | 浏览器半边的 loader 拿到的是工厂返回值，只接受这个形状（形状说明见 `docs/analysis.md` 1.4）。 |
+| `lib/client/index.js` | 对象插件 `{ name, inject, apply }` | 浏览器半边的 loader 拿到的是工厂返回值，只接受这个形状（形状说明见 `docs/analysis.md` 1.4）。 |
 
 包级声明只有两个文件：
 
@@ -52,11 +52,11 @@ Cordis 接受三种插件形状（函数 / 对象 / Service 子类）。本插�
 | `lib/learning-store.js` | 988 | 状态内核：`LearningStore`（load/save/validate/migrate）、间隔重复、概念进度、难度校准、确定性 id、领域模板。 | 纯 Node 内建依赖，不 import 任何 Cordis；与上游 Python `state.py` 逐字节等价。 |
 | `lib/scope.js` | 337 | scope 解析（`resolveStatePath` / `sessionCwd`）、按路径缓存的 `LearningAcceleratorService`、两块注入文本的渲染与门禁。 | 唯一决定"这轮属于哪个文件"的地方；不认识 Cordis，可独立单测。 |
 | `lib/protocol.js` | 344 | 教学协议：纯数据（七种模式、教学单元、错误分析步骤、信号极性、两张类比表）+ 纯字符串构造函数。 | 无 Cordis、无文件系统、无时钟；`composeTeachingProtocol()` 是全函数，永不抛。 |
-| `lib/tools.js` | 592 | 五个模型可调用工具的注册与 `execute`/`render`。 | 只通过 `service` 访问状态；`learning_record` 是唯一写入路径。 |
+| `lib/tools/` | 5 个文件 | 五个模型可调用工具，一文件一个（`status` / `due` / `session` / `record` / `domain`）；`index.js` 只做注册。 | 只通过 `service` 访问状态；`learning_record` 是唯一写入路径。 |
 | `lib/panel.js` | 75 | 把一次 `summarize()` 的结果压成面板 payload。 | 纯函数：无 Cordis、无 HTTP；分页与排序只做一次，浏览器不接触状态 schema。 |
 | `lib/panel-route.js` | 176 | 面板 HTTP 路由 `PANEL_ROUTE`、方法判断、Host/Origin 守门。 | 自己承担鉴权（路由不在 `/api` 网关内）。 |
 | `lib/index.js` | 212 | Cordis 入口：`Config`、service 挂载、五个工具、两个 `systemPrompt.context`、面板路由接线。 | 所有注册都是 effect，卸载即撤销。 |
-| `lib/client.js` | 405 | 浏览器半边：两个 seat、locale 字典、样式注入、fetch 面板数据。 | classic script，无构建、无 JSX。 |
+| `lib/client.js` | 生成 | 浏览器半边：两个 seat、locale 字典、样式注入、fetch 面板数据。**由 `lib/client/` 生成**，不要手改。 | classic script，无 JSX。宿主每包只服务一个 bundle，所以源按职责拆成 6 个片段、产物合成一个文件；`tests/client-build.test.js` 防止产物过期。 |
 
 另有 `schemas/learning_state.schema.json`：README 用的状态形状文档，`tests/schema.test.js` 保证它与
 内核常量（`SCHEMA_VERSION`、枚举、`defaultState()` 的键）一致。内核才是权威，schema 是投影。
@@ -85,7 +85,7 @@ Cordis 接受三种插件形状（函数 / 对象 / Service 子类）。本插�
 
 等价的另一半是**确定性 id**：`stableId(*parts) = sha1(小写去空、'\n' 连接)[:12]`
 （`:263-266`）。它让"同一概念 + 同一题目"再次调度时是 upsert 而不是追加（`:269-277`），队列因此不会
-膨胀；工具层也靠重算同一个 id 把刚写进去的那一行读回来（`lib/tools.js:416-420,452-455`）。
+膨胀；工具层也靠重算同一个 id 把刚写进去的那一行读回来（`lib/tools/record.js`，`stableId` 两处）。
 
 测试在 `python3` 或上游 checkout 缺失时**跳过而不是失败**（`tests/store-equivalence.test.js:27-37,167`），
 所以这个包可以脱离上游单独跑测试。
@@ -129,11 +129,11 @@ Cordis 把 `ctx.on` / `ctx.plugin` / `ctx.tools.register` / `ctx.systemPrompt.co
 | 注册 | 位置 |
 |---|---|
 | service 挂载 | `lib/index.js:152-154` |
-| 五个工具 | `lib/tools.js:52,133,198,302,539`（每次 `ctx.tools.register`） |
+| 五个工具 | `lib/tools/index.js` 的 `registerLearningTools`（逐个 `ctx.tools.register`） |
 | 协议块 | `lib/index.js:166-174` |
 | 状态块 | `lib/index.js:181-191` |
 | 面板路由 | `lib/panel-route.js:139` 的 `injected.effect(...)` |
-| 浏览器侧两个 seat 与字典 | `lib/client.js:380,385,396` |
+| 浏览器侧两个 seat 与字典 | `lib/client/index.js`（注册）+ `lib/client/00-strings.js`（字典） |
 
 `tests/host-plugin.test.js:564-575` 断言 dispose 之后工具表为空、两个 context 也都消失。这条测试能
 成立的前提是 mock 复刻了真实生命周期契约，见第八节。
@@ -286,7 +286,7 @@ real wiring* 与 *an explicitly configured scope still pins the panel*：它们�
 
 ## 九、唯一一处绕过内核方法的写入
 
-`learning_record` 的 `mistake` 分支（`lib/tools.js:481-506`）直接 `store.load()` → 改
+`learning_record` 的 `mistake` 分支（`lib/tools/record.js` 的 `mistake` 分支）直接 `store.load()` → 改
 `practice_state.last_code_errors` → `store.save(state)`，然后再逐概念调
 `recordConcept()` / `addReview()` / `recordEvidence()`。
 
