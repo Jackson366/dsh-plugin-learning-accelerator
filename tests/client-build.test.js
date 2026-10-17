@@ -80,10 +80,13 @@ test('no hand-written source file exceeds the line budget', () => {
   // Two files are allowed to be long, for reasons that are about correctness
   // rather than taste:
   //
-  // - `lib/learning-store.js` is a 1:1 port of the upstream Python store. The
-  //   byte-equivalence suite compares the two implementations, and keeping the
-  //   correspondence readable *is* the module's responsibility. Splitting it
-  //   would make the port harder to audit against its original.
+  // - `lib/learning-store.js` holds the `LearningStore` class, which is a 1:1
+  //   port of the upstream Python store. Its data shape and free functions have
+  //   already been moved to `lib/store/`; what remains is one cohesive class
+  //   whose method-by-method correspondence with `state.py` is the audit surface
+  //   the byte-equivalence suite depends on. Decomposing the class further is a
+  //   design change, not a mechanical move, so it stays exempt until that is
+  //   decided deliberately.
   // - `lib/client.js` is generated. The host serves exactly one bundle file per
   //   package, so its length is a platform constraint; the source it is built
   //   from lives in `lib/client/` and is budgeted separately above.

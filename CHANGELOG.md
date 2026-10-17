@@ -125,10 +125,21 @@ findings were not taste — the stylesheet was not doing what it said.
 - **`lib/tools.js` is now `lib/tools/`**, one file per tool plus a registry. The
   five tools shared nothing but two parameter nodes, so splitting removed the need
   to scroll past four schemas to read the fifth.
-- No hand-written file exceeds 400 lines except `lib/learning-store.js`, which is
-  deliberately kept as a 1:1 mirror of the upstream Python store because the
-  byte-equivalence suite compares the two implementations. A test now encodes that
+- `lib/learning-store.js` was 1020 lines mixing the state's *shape* (enums, domain
+  templates, `defaultState`), its *free functions* (dates, code-point ordering,
+  deterministic ids, the review/exercise constructors) and the `LearningStore`
+  class. The first two are now `lib/store/schema.js` and `lib/store/values.js`,
+  and `learning-store.js` re-exports the public surface so every caller keeps one
+  import path. The class itself is unchanged: decomposing it would mean choosing
+  between delegation, a base class, or mixins, and its method-by-method
+  correspondence with `state.py` is the audit surface the byte-equivalence suite
+  leans on. It stays exempt from the line budget, and a test encodes that
   exemption so it cannot quietly grow into a third exception.
+- Adding `lib/store/` silently shrank a safety net: the "no state writes outside
+  the store" test only scanned top-level `lib/*.js`, so a write in a subdirectory
+  would have gone unnoticed. It now walks `lib/` recursively with an explicit
+  allowlist, verified by injecting a `writeFileSync` into `lib/store/values.js`
+  and watching it fail.
 
 ### Tests
 

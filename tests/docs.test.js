@@ -132,14 +132,29 @@ test('no source file writes learning state outside the store', () => {
   // `learning_record` is documented as the single write path, and the panel is
   // documented as read-only. A stray writeFile to a state path would break the
   // byte-equivalence guarantee this package is built on.
-  const libDir = join(ROOT, 'lib')
+  //
+  // The walk is recursive on purpose: `lib/` now has subdirectories
+  // (`lib/store/`, `lib/tools/`, `lib/client/`), and a top-level-only scan would
+  // silently stop covering them — which is exactly the hole a split could hide a
+  // write in. If persistence ever moves out of `learning-store.js`, add the new
+  // owner here deliberately rather than widening the allowlist by accident.
+  const WRITERS = new Set([join('lib', 'learning-store.js')])
+  const files = []
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const absolute = join(dir, entry.name)
+      if (entry.isDirectory()) walk(absolute)
+      else if (entry.name.endsWith('.js')) files.push(relative(ROOT, absolute))
+    }
+  }
+  walk(join(ROOT, 'lib'))
+
   const offenders = []
-  for (const file of readdirSync(libDir).filter(name => name.endsWith('.js'))) {
-    const text = readFileSync(join(libDir, file), 'utf8')
+  for (const file of files) {
+    const text = readFileSync(join(ROOT, file), 'utf8')
     for (const match of text.matchAll(/writeFileSync\(|appendFileSync\(/g)) {
       const line = text.slice(0, match.index).split('\n').length
-      // The store owns persistence; it is the one file allowed to write state.
-      if (file !== 'learning-store.js') offenders.push(`${relative(ROOT, join(libDir, file))}:${line}`)
+      if (!WRITERS.has(file)) offenders.push(`${file}:${line}`)
     }
   }
   assert.deepEqual(offenders, [], `state writes outside the store: ${offenders.join(', ')}`)

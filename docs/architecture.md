@@ -49,7 +49,9 @@ Cordis 接受三种插件形状（函数 / 对象 / Service 子类）。本插�
 
 | 模块 | 行数 | 职责 | 关键边界 |
 |---|---|---|---|
-| `lib/learning-store.js` | 988 | 状态内核：`LearningStore`（load/save/validate/migrate）、间隔重复、概念进度、难度校准、确定性 id、领域模板。 | 纯 Node 内建依赖，不 import 任何 Cordis；与上游 Python `state.py` 逐字节等价。 |
+| `lib/learning-store.js` | 717 | `LearningStore` 类：load/save/validate/migrate、间隔重复、概念进度、难度校准；并 re-export 下方两个模块的公开面。 | 纯 Node 内建依赖，不 import 任何 Cordis；与上游 Python `state.py` 逐字节等价。 |
+| `lib/store/schema.js` | 200 | 状态形状：版本、路径、枚举、`DOMAIN_TEMPLATES`、`defaultState()`。 | 纯数据与一个构造器，无 I/O；可与 `state.py` 的常量块逐段对照。 |
+| `lib/store/values.js` | 193 | 无状态的自由函数：日期、码点排序、确定性 id、review/exercise 构造器。 | 无 I/O，可脱离文件系统单测。 |
 | `lib/scope.js` | 337 | scope 解析（`resolveStatePath` / `sessionCwd`）、按路径缓存的 `LearningAcceleratorService`、两块注入文本的渲染与门禁。 | 唯一决定"这轮属于哪个文件"的地方；不认识 Cordis，可独立单测。 |
 | `lib/protocol.js` | 344 | 教学协议：纯数据（七种模式、教学单元、错误分析步骤、信号极性、两张类比表）+ 纯字符串构造函数。 | 无 Cordis、无文件系统、无时钟；`composeTeachingProtocol()` 是全函数，永不抛。 |
 | `lib/tools/` | 5 个文件 | 五个模型可调用工具，一文件一个（`status` / `due` / `session` / `record` / `domain`）；`index.js` 只做注册。 | 只通过 `service` 访问状态；`learning_record` 是唯一写入路径。 |

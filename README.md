@@ -196,7 +196,9 @@ definition.
 ## Layout
 
 ```
-lib/learning-store.js   state kernel + spaced repetition, a faithful port of state.py
+lib/learning-store.js   the store: load/save, reviews, exercises, difficulty; re-exports the kernel surface
+lib/store/schema.js     the state's shape: version, paths, enums, domain templates, defaultState
+lib/store/values.js     the free functions: dates, ordering, ids, review/exercise constructors
 lib/protocol.js         the teaching protocol (pure data + pure builders, ported from the three upstream markdown files)
 lib/scope.js            scope resolution + the caching host service, and both injection texts
 lib/tools/              one file per tool (status, due, session, record, domain); index.js registers them
