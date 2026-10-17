@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
+      npm_publish_enabled: ${{ steps.npm_publish.outputs.enabled }}
     steps:
       - name: Check out this package
         uses: actions/checkout@v4
@@ -30,6 +31,19 @@ jobs:
             exit 1
           fi
           echo "value=${pkg#v}" >> "$GITHUB_OUTPUT"
+
+      # The secrets context is available in steps, not in job-level conditions.
+      # Export a non-sensitive flag so an optional npm publish job can be gated.
+      - name: Check npm publishing credentials
+        id: npm_publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -53,7 +67,7 @@ jobs:
             @deepseek-ai/dsh-system-prompt@0.2.0-rc.2
 
       - name: Run the suite
-        run: node --test tests/
+        run: node --test tests/*.test.js
 
       - name: Build the tarball
         run: npm pack
@@ -64,12 +78,12 @@ jobs:
           files: dsh-plugin-learning-accelerator-*.tgz
           generate_release_notes: true
 
-  # Its own job so the `if` can read the secret: a step cannot see its own `env`
-  # in its own `if`, which would make an inline gate silently never run.
+  # Gate optional npm publishing on a non-sensitive output from the release job.
+  # Job-level `if` expressions cannot access the `secrets` context directly.
   publish:
     needs: release
     runs-on: ubuntu-latest
-    if: ${{ secrets.NPM_TOKEN != '' }}
+    if: ${{ needs.release.outputs.npm_publish_enabled == 'true' }}
     permissions:
       contents: read
       id-token: write

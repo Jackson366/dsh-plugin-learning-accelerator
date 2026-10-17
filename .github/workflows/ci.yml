@@ -46,4 +46,4 @@ jobs:
             @deepseek-ai/dsh-system-prompt@0.2.0-rc.2
 
       - name: Run the suite
-        run: node --test tests/
+        run: node --test tests/*.test.js
