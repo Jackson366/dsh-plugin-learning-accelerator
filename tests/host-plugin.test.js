@@ -766,25 +766,53 @@ test('learning_status due_limit is not silently capped at five', async () => {
 
 test('learning_due reports a local calendar date, not a UTC one', async () => {
   // The kernel decides due-ness with a local `todayIso()`; echoing a UTC
-  // `toISOString()` slice here would name a different day for part of the day.
+  // `toISOString()` slice here would name a different day only for part of the
+  // day. Pin the wall clock to an instant on the other side of that boundary,
+  // or the guard below passes by accident whenever the two dates coincide.
+  const RealDate = Date
   const harness = await mountPlugin()
   try {
     seedDueReviews(harness, 1)
-    const now = new Date()
-    const local = [
-      String(now.getFullYear()).padStart(4, '0'),
-      String(now.getMonth() + 1).padStart(2, '0'),
-      String(now.getDate()).padStart(2, '0'),
-    ].join('-')
 
-    const value = await run(harness, 'learning_due', {})
+    // Half an hour past local midnight east of Greenwich, half an hour before
+    // it west of Greenwich. Real zones are offset by at least an hour, so the
+    // UTC calendar day always falls on the neighbouring one.
+    const offset = new RealDate().getTimezoneOffset()
+    const probe = new RealDate()
+    if (offset < 0) probe.setHours(0, 30, 0, 0)
+    else if (offset > 0) probe.setHours(23, 30, 0, 0)
+    const fixed = probe.getTime()
+
+    const local = [
+      String(probe.getFullYear()).padStart(4, '0'),
+      String(probe.getMonth() + 1).padStart(2, '0'),
+      String(probe.getDate()).padStart(2, '0'),
+    ].join('-')
+    const utc = new RealDate(fixed).toISOString().slice(0, 10)
+
+    globalThis.Date = class extends RealDate {
+      constructor(...args) {
+        super(...(args.length > 0 ? args : [fixed]))
+      }
+      static now() {
+        return fixed
+      }
+    }
+    let value
+    try {
+      value = await run(harness, 'learning_due', {})
+    } finally {
+      globalThis.Date = RealDate
+    }
+
     assert.equal(value.on_date, local)
-    if (now.getTimezoneOffset() !== 0) {
-      // Guards the regression itself: in any non-UTC zone the two derivations
-      // disagree for part of the day, so this assertion has teeth where it runs.
-      assert.notEqual(value.on_date, now.toISOString().slice(0, 10))
+    if (offset !== 0) {
+      // Guards the regression itself: with the clock pinned across the date
+      // boundary, a UTC derivation names the other day.
+      assert.notEqual(value.on_date, utc)
     }
   } finally {
+    globalThis.Date = RealDate
     harness.cleanup()
   }
 })
