@@ -138,7 +138,8 @@ test('no source file writes learning state outside the store', () => {
   // silently stop covering them — which is exactly the hole a split could hide a
   // write in. If persistence ever moves out of `learning-store.js`, add the new
   // owner here deliberately rather than widening the allowlist by accident.
-  const WRITERS = new Set([join('lib', 'learning-store.js')])
+  const STATE_WRITERS = new Set([join('lib', 'learning-store.js')])
+  const AUDIT_WRITERS = new Set([join('lib', 'audit.js')])
   const files = []
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -154,7 +155,9 @@ test('no source file writes learning state outside the store', () => {
     const text = readFileSync(join(ROOT, file), 'utf8')
     for (const match of text.matchAll(/writeFileSync\(|appendFileSync\(/g)) {
       const line = text.slice(0, match.index).split('\n').length
-      if (!WRITERS.has(file)) offenders.push(`${file}:${line}`)
+      const op = match[0]
+      if (op === 'writeFileSync(' && !STATE_WRITERS.has(file)) offenders.push(`${file}:${line}`)
+      if (op === 'appendFileSync(' && !AUDIT_WRITERS.has(file)) offenders.push(`${file}:${line}`)
     }
   }
   assert.deepEqual(offenders, [], `state writes outside the store: ${offenders.join(', ')}`)
