@@ -30,7 +30,7 @@ function markdownFiles() {
       if (entry.endsWith('.md')) found.push(join(dir, entry))
     }
   }
-  return found.filter(file => existsSync(join(ROOT, file)))
+  return found.filter((file) => existsSync(join(ROOT, file)))
 }
 
 /** Relative link targets in one markdown file, anchors and queries stripped. */
@@ -42,7 +42,7 @@ function relativeLinks(file) {
     if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('#') || raw.startsWith('/')) continue
     targets.push(raw.split('#')[0].split('?')[0])
   }
-  return targets.map(target => ({ target, from: file })).filter(entry => entry.target.length > 0)
+  return targets.map((target) => ({ target, from: file })).filter((entry) => entry.target.length > 0)
 }
 
 test('every relative markdown link resolves', () => {
@@ -99,7 +99,7 @@ test('documented counts match reality', () => {
   // The README states a test count and a file count. Keeping them honest is
   // cheaper here than in review, and a stale number is the first thing a reader
   // stops trusting.
-  const testFiles = readdirSync(join(ROOT, 'tests')).filter(file => file.endsWith('.test.js'))
+  const testFiles = readdirSync(join(ROOT, 'tests')).filter((file) => file.endsWith('.test.js'))
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const claimed = readme.match(/(\d+)\s+tests?\s+across\s+(\w+)\s+files/)
   if (claimed) {

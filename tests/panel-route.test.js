@@ -60,7 +60,7 @@ function carrierStub() {
   return {
     routes,
     register(route) {
-      if (routes.some(existing => existing.path === route.path)) {
+      if (routes.some((existing) => existing.path === route.path)) {
         throw new Error(`duplicate ${route.kind} route "${route.path}"`)
       }
       routes.push(route)
@@ -175,7 +175,10 @@ test('a GET returns the panel snapshot as uncached JSON', async () => {
 test('a rejected request is 403, is logged, and leaks no state', async () => {
   const warnings = []
   const carrier = carrierStub()
-  registerPanelRoute(contextStub(carrier, warnings), createService(), { buildPayload: panelPayload, logger: { warn: (message) => warnings.push(message) } })
+  registerPanelRoute(contextStub(carrier, warnings), createService(), {
+    buildPayload: panelPayload,
+    logger: { warn: (message) => warnings.push(message) },
+  })
 
   const res = createResponse()
   await carrier.routes[0].handler(request({ host: 'evil.example.com' }), res)
@@ -219,7 +222,9 @@ test('a malformed state file answers 200 with the error, so the panel can explai
 test('a throwing payload builder is contained, not turned into a 500', async () => {
   const carrier = carrierStub()
   registerPanelRoute(contextStub(carrier), createService(), {
-    buildPayload: () => { throw new Error('builder exploded') },
+    buildPayload: () => {
+      throw new Error('builder exploded')
+    },
   })
   const res = createResponse()
   await carrier.routes[0].handler(request(), res)
@@ -262,10 +267,9 @@ test('an explicit or configured scope still wins over the session hint', () => {
     // A configured user scope is a deliberate global choice; the panel must honour it.
     assert.equal(service.panelRequest().scope, 'user')
     // An explicit request is passed through untouched.
-    assert.deepEqual(
-      service.panelRequest({ stateFile: '/tmp/explicit.json' }),
-      { stateFile: '/tmp/explicit.json' },
-    )
+    assert.deepEqual(service.panelRequest({ stateFile: '/tmp/explicit.json' }), {
+      stateFile: '/tmp/explicit.json',
+    })
     assert.deepEqual(service.panelRequest({ scope: 'project' }), { scope: 'project' })
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -337,10 +341,7 @@ test('the reported workspace is read from the cwd parameter, not from the path',
   assert.equal(panelCwdFromRequest({ url: `${PANEL_ROUTE}?cwd=%2Ftmp%2Fa&cwd=%2Fetc` }), '/tmp/a')
   // A full absolute request target is accepted too; only the pathname carries
   // the route, so the search string still parses.
-  assert.equal(
-    panelCwdFromRequest({ url: `http://127.0.0.1:3080${PANEL_ROUTE}?cwd=%2Ftmp%2Flearn` }),
-    '/tmp/learn',
-  )
+  assert.equal(panelCwdFromRequest({ url: `http://127.0.0.1:3080${PANEL_ROUTE}?cwd=%2Ftmp%2Flearn` }), '/tmp/learn')
 })
 
 test('a cwd hint that is not an absolute path is dropped, not trusted', () => {
@@ -390,10 +391,9 @@ test('an explicit stateFile, a configured scope, or a bad cwd still decides norm
   try {
     const service = createService()
     // An explicit request is passed through untouched, cwd hint or not.
-    assert.deepEqual(
-      service.panelRequest({ stateFile: '/tmp/explicit.json' }, reported),
-      { stateFile: '/tmp/explicit.json' },
-    )
+    assert.deepEqual(service.panelRequest({ stateFile: '/tmp/explicit.json' }, reported), {
+      stateFile: '/tmp/explicit.json',
+    })
     assert.deepEqual(service.panelRequest({ scope: 'user' }, reported), { scope: 'user' })
     // A relative or missing hint falls through to the host's own resolution
     // rather than producing a path relative to the process directory.
@@ -416,10 +416,7 @@ test('a GET with a cwd hint renders that workspace through the route', async () 
     registerPanelRoute(contextStub(carrier), service, { buildPayload: panelPayload })
 
     const res = createResponse()
-    await carrier.routes[0].handler(
-      request({ url: `${PANEL_ROUTE}?cwd=${encodeURIComponent(reported)}` }),
-      res,
-    )
+    await carrier.routes[0].handler(request({ url: `${PANEL_ROUTE}?cwd=${encodeURIComponent(reported)}` }), res)
     assert.equal(res.record.status, 200)
     const body = JSON.parse(res.record.body)
     assert.equal(body.ok, true)

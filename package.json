@@ -8,6 +8,8 @@
   },
   "scripts": {
     "build": "node scripts/build-client.mjs",
+    "format": "prettier --write \"lib/**/*.js\" \"tests/**/*.js\" \"scripts/**/*.mjs\"",
+    "format:check": "prettier --check \"lib/**/*.js\" \"tests/**/*.js\" \"scripts/**/*.mjs\"",
     "test": "node --test tests/*.test.js"
   },
   "main": "lib/index.js",
@@ -59,6 +61,9 @@
     "@deepseek-ai/schemastery": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10"
   },
   "keywords": [
     "deepseek-harness",

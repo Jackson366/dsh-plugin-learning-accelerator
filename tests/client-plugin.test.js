@@ -78,11 +78,14 @@ function createRenderer() {
       if (root.states[index] === undefined) {
         root.states[index] = typeof initial === 'function' ? initial() : initial
       }
-      return [root.states[index], (next) => {
-        const value = typeof next === 'function' ? next(root.states[index]) : next
-        root.states[index] = value
-        root.dirty = true
-      }]
+      return [
+        root.states[index],
+        (next) => {
+          const value = typeof next === 'function' ? next(root.states[index]) : next
+          root.states[index] = value
+          root.dirty = true
+        },
+      ]
     },
     useEffect(effect, deps) {
       const root = hooks.root
@@ -92,11 +95,12 @@ function createRenderer() {
       // React's dependency comparison, and it is load-bearing here: without it a
       // data effect would re-run on every pass, and its own setState would
       // re-dirty the root forever instead of settling.
-      const same = previous !== undefined
-        && Array.isArray(deps)
-        && Array.isArray(previous.deps)
-        && deps.length === previous.deps.length
-        && deps.every((value, position) => Object.is(value, previous.deps[position]))
+      const same =
+        previous !== undefined &&
+        Array.isArray(deps) &&
+        Array.isArray(previous.deps) &&
+        deps.length === previous.deps.length &&
+        deps.every((value, position) => Object.is(value, previous.deps[position]))
       if (same) return
       // A re-running effect cleans up its previous run first — this is what stops
       // an in-flight fetch from being abandoned on a re-render.
@@ -125,7 +129,10 @@ function createRenderer() {
     hooks.root = null
     for (const { index, deps, effect } of hooks.effects) {
       const cleanup = effect()
-      root.effects.set(index, { deps, cleanup: typeof cleanup === 'function' ? cleanup : undefined })
+      root.effects.set(index, {
+        deps,
+        cleanup: typeof cleanup === 'function' ? cleanup : undefined,
+      })
     }
     return tree
   }
@@ -143,13 +150,16 @@ function createPrimitivesStub() {
     component.displayName = `Primitives.${name}`
     return component
   }
-  return new Proxy({}, {
-    get(_target, key) {
-      if (typeof key !== 'string') return undefined
-      // Anything the bundle reaches for (buttons, pills, icons) becomes a leaf.
-      return stub(key)
+  return new Proxy(
+    {},
+    {
+      get(_target, key) {
+        if (typeof key !== 'string') return undefined
+        // Anything the bundle reaches for (buttons, pills, icons) becomes a leaf.
+        return stub(key)
+      },
     },
-  })
+  )
 }
 
 /** The locale dictionaries the bundle registers, captured for assertions. */
@@ -161,7 +171,7 @@ function createLocaleStub(captured, locale = 'zh') {
     },
     bind(namespace) {
       return (key) => {
-        const entry = captured.find(candidate => candidate.namespace === namespace)
+        const entry = captured.find((candidate) => candidate.namespace === namespace)
         return entry?.dictionaries?.[locale]?.[key] ?? key
       }
     },
@@ -202,7 +212,9 @@ function loadBundle({ fetchImpl, locale = 'zh' } = {}) {
       tag,
       attributes: {},
       textContent: '',
-      setAttribute(key, value) { this.attributes[key] = value },
+      setAttribute(key, value) {
+        this.attributes[key] = value
+      },
     }),
     querySelector: () => null,
   }
@@ -210,7 +222,11 @@ function loadBundle({ fetchImpl, locale = 'zh' } = {}) {
   const sandbox = {
     window: { __ModuleLoader__: sink },
     document,
-    fetch: fetchImpl ?? (async () => { throw new Error('unexpected fetch') }),
+    fetch:
+      fetchImpl ??
+      (async () => {
+        throw new Error('unexpected fetch')
+      }),
     console,
   }
   sandbox.globalThis = sandbox
@@ -239,7 +255,7 @@ function loadBundle({ fetchImpl, locale = 'zh' } = {}) {
     exports.apply(ctx)
     return {
       componentFor(slot) {
-        const entry = captured.registered.find(candidate => candidate.options.name === slot)
+        const entry = captured.registered.find((candidate) => candidate.options.name === slot)
         assert.ok(entry, `${slot} was not registered`)
         return entry.component
       },
@@ -298,7 +314,15 @@ function samplePayload() {
     mastered_concepts: ['effect'],
     weak_concepts: ['waterfall 语义'],
     due_reviews: [{ id: 'r1', concept: 'waterfall 语义', prompt: '不调用 next() 会怎样', due_at: '2026-10-16' }],
-    priority_reviews: [{ id: 'r1', concept: 'waterfall 语义', prompt: '不调用 next() 会怎样', priority: 70, strength: 0.3 }],
+    priority_reviews: [
+      {
+        id: 'r1',
+        concept: 'waterfall 语义',
+        prompt: '不调用 next() 会怎样',
+        priority: 70,
+        strength: 0.3,
+      },
+    ],
     concept_progress: [{ concept: 'waterfall 语义', strength: 0.3, failure_count: 2 }],
     current_tasks: [{ id: 't1', name: '读完 cordis-tutorial 第七章' }],
     counts: { exercises: 1, attempts: 2, mastered: 1, weak: 1, due: 1 },
@@ -306,7 +330,7 @@ function samplePayload() {
 }
 
 /** Wait one macrotask so a resolved fetch can settle. */
-const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 /**
  * The copy the components should render, read back out of the bundle's own
@@ -336,7 +360,7 @@ test('apply registers both slots with the declared options and a locale thunk', 
   const { mount, captured } = loadBundle()
   mount()
 
-  const view = captured.registered.find(entry => entry.options.name === 'conversation.view')
+  const view = captured.registered.find((entry) => entry.options.name === 'conversation.view')
   assert.ok(view, 'conversation.view was not registered')
   assert.equal(view.options.id, 'learning')
   assert.equal(view.options.order, 30)
@@ -345,13 +369,13 @@ test('apply registers both slots with the declared options and a locale thunk', 
   assert.equal(typeof view.options.label, 'function')
   assert.equal(view.options.label(), '学习')
 
-  const sidebar = captured.registered.find(entry => entry.options.name === 'sidebar.footer.action')
+  const sidebar = captured.registered.find((entry) => entry.options.name === 'sidebar.footer.action')
   assert.ok(sidebar, 'sidebar.footer.action was not registered')
   assert.equal(sidebar.options.id, 'learning')
   assert.equal(sidebar.options.order, 100)
 
   // Both registrations must wait for their slot declaration.
-  assert.deepEqual(captured.injected.map(entry => entry.key).sort(), ['conversation.view', 'sidebar.footer.action'])
+  assert.deepEqual(captured.injected.map((entry) => entry.key).sort(), ['conversation.view', 'sidebar.footer.action'])
 
   // Both built-in locales must be registered, or the `locale: NS` registration
   // would throw at assembly time.
@@ -395,7 +419,8 @@ test("the panel sends the open conversation's workspace as a cwd hint", async ()
   renderer.render('view', componentFor('conversation.view'), {
     t: (key) => key,
     sessionId: 'session-a',
-    useSessions: (select) => select(sessionList({ 'session-a': { sessionId: 'session-a', cwd: '/tmp/other project' } })),
+    useSessions: (select) =>
+      select(sessionList({ 'session-a': { sessionId: 'session-a', cwd: '/tmp/other project' } })),
   })
   await settle()
   // Encoded, because a workspace path may hold spaces and the host reads it back
@@ -465,11 +490,7 @@ test('an unknown session workspace sends no hint instead of guessing one', async
   })
   await settle()
 
-  assert.deepEqual(seen, [
-    '/learning-accelerator/panel',
-    '/learning-accelerator/panel',
-    '/learning-accelerator/panel',
-  ])
+  assert.deepEqual(seen, ['/learning-accelerator/panel', '/learning-accelerator/panel', '/learning-accelerator/panel'])
 })
 
 test('the panel renders the learner state once the fetch resolves', async () => {
@@ -530,7 +551,11 @@ test('a malformed state file renders the host error, not a crash', async () => {
   const { mount, renderer } = loadBundle({
     fetchImpl: async () => ({
       ok: true,
-      json: async () => ({ ok: false, error: 'Invalid JSON in /tmp/x: Unexpected token', path: '/tmp/x' }),
+      json: async () => ({
+        ok: false,
+        error: 'Invalid JSON in /tmp/x: Unexpected token',
+        path: '/tmp/x',
+      }),
     }),
   })
   const { componentFor } = mount()
@@ -558,7 +583,9 @@ test('a missing route is reported as a route problem, not a state problem', asyn
 
 test('the sidebar entry survives an unreachable route and stays accessible', async () => {
   const { mount, renderer } = loadBundle({
-    fetchImpl: async () => { throw new Error('ECONNREFUSED') },
+    fetchImpl: async () => {
+      throw new Error('ECONNREFUSED')
+    },
   })
   const { componentFor } = mount()
   const slot = componentFor('sidebar.footer.action')
@@ -572,7 +599,7 @@ test('the sidebar entry survives an unreachable route and stays accessible', asy
   assert.match(wideText, /sidebar\.label/)
   assert.equal(wideText.includes('ECONNREFUSED'), false, 'a transport error is not panel copy')
   // The collapsed rail hides the visible label but keeps the accessible name.
-  assert.equal(textOf(rail).join(" ").includes("sidebar.label"), false)
+  assert.equal(textOf(rail).join(' ').includes('sidebar.label'), false)
   assert.match(String(rail.props.title), /sidebar\.none/)
 })
 
@@ -710,9 +737,7 @@ test('the panel shows progress the payload already carries, not only failures', 
   payload.priority_reviews = []
   payload.due_reviews = []
   payload.counts = { ...payload.counts, due: 0 }
-  payload.concept_progress = [
-    { concept: 'waterfall 语义', strength: 0.5, failure_count: 2, correct_streak: 3 },
-  ]
+  payload.concept_progress = [{ concept: 'waterfall 语义', strength: 0.5, failure_count: 2, correct_streak: 3 }]
   const { mount, renderer } = loadBundle({
     fetchImpl: async () => ({ ok: true, json: async () => payload }),
   })
@@ -730,7 +755,13 @@ test('the panel shows progress the payload already carries, not only failures', 
 test('an overdue review says how late it is instead of showing an opaque score', async () => {
   const payload = samplePayload()
   payload.priority_reviews = [
-    { id: 'r1', concept: 'waterfall 语义', prompt: '不调用 next() 会怎样', strength: 0.3, due_at: '2020-01-01' },
+    {
+      id: 'r1',
+      concept: 'waterfall 语义',
+      prompt: '不调用 next() 会怎样',
+      strength: 0.3,
+      due_at: '2020-01-01',
+    },
   ]
   const { mount, renderer } = loadBundle({
     fetchImpl: async () => ({ ok: true, json: async () => payload }),
@@ -754,8 +785,10 @@ test('the panel renders the payload fields that used to be forwarded but unused'
   await settle()
   const text = textOf(renderer.render('view', slot, { t: (key) => key })).join(' ')
   assert.match(text, /写出可安装的 DSH 插件/, 'target_outcome was forwarded and never shown')
-  assert.ok(findAll(renderer.render('view', slot, { t: (key) => key }), 'Primitives.Tag').length > 0,
-    'mastered concepts should render as tags')
+  assert.ok(
+    findAll(renderer.render('view', slot, { t: (key) => key }), 'Primitives.Tag').length > 0,
+    'mastered concepts should render as tags',
+  )
 })
 
 test('the empty state hides the refresh control that could not change anything', async () => {

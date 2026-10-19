@@ -43,37 +43,50 @@ function pythonAvailable() {
  */
 const SCENARIO = [
   ['reset', {}],
-  ['profile', {
-    learning_domain: 'technology',
-    known_stack: ['JavaScript', 'TypeScript', 'React'],
-    known_skills: ['JavaScript', 'TypeScript', 'React'],
-    experience_level: 'intermediate',
-    learning_goal: '掌握 DSH 插件机制',
-    target_outcome: '写出一个可安装的 DSH 插件',
-    preferred_language: 'zh-CN',
-    constraint: '每天 30 分钟',
-  }],
+  [
+    'profile',
+    {
+      learning_domain: 'technology',
+      known_stack: ['JavaScript', 'TypeScript', 'React'],
+      known_skills: ['JavaScript', 'TypeScript', 'React'],
+      experience_level: 'intermediate',
+      learning_goal: '掌握 DSH 插件机制',
+      target_outcome: '写出一个可安装的 DSH 插件',
+      preferred_language: 'zh-CN',
+      constraint: '每天 30 分钟',
+    },
+  ],
   ['topic', { topic: 'DSH Cordis 插件', level: 'beginner' }],
   ['task', { name: '读完 cordis-tutorial 第七章' }],
   ['task', { name: '把 greet 工具注册进 tools 服务' }],
   ['conceptWeak', { concept: 'Cordis waterfall 语义' }],
   ['conceptMastered', { concept: '插件 apply 函数' }],
-  ['review', { concept: 'Cordis waterfall 语义', prompt: '解释 waterfall 里不调用 next() 会发生什么', result: 'correct' }],
+  [
+    'review',
+    {
+      concept: 'Cordis waterfall 语义',
+      prompt: '解释 waterfall 里不调用 next() 会发生什么',
+      result: 'correct',
+    },
+  ],
   ['review', { concept: 'inject 与 PENDING', prompt: '注入的服务不存在时插件处于什么状态', result: 'fuzzy' }],
   ['evidence', { signal: 'recall_correct', detail: 'waterfall 解释正确' }],
   ['evidence', { signal: 'recall_correct', detail: 'inject 解释正确' }],
-  ['spec', {
-    topic: 'DSH Cordis 插件',
-    concepts: ['defineTool', 'tools.register'],
-    difficulty: 'normal',
-    task: '注册一个最小工具并在 Web UI 中调用',
-    goal: '理解工具注册即 effect',
-    input: '',
-    expected_output: '工具卡片出现在对话流中',
-    constraints: [],
-    evaluation_criteria: ['注册是 effect', '卸载后工具消失'],
-    hint: '从 ctx.tools.register 开始',
-  }],
+  [
+    'spec',
+    {
+      topic: 'DSH Cordis 插件',
+      concepts: ['defineTool', 'tools.register'],
+      difficulty: 'normal',
+      task: '注册一个最小工具并在 Web UI 中调用',
+      goal: '理解工具注册即 effect',
+      input: '',
+      expected_output: '工具卡片出现在对话流中',
+      constraints: [],
+      evaluation_criteria: ['注册是 effect', '卸载后工具消失'],
+      hint: '从 ctx.tools.register 开始',
+    },
+  ],
 ]
 
 /** Node driver: applies the scenario through the JavaScript store. */
@@ -82,20 +95,37 @@ function runNode(file) {
   const specIds = []
   for (const [step, payload] of SCENARIO) {
     switch (step) {
-      case 'reset': store.reset(); break
-      case 'profile': store.updateProfile(payload); break
-      case 'topic': store.setTopic(payload.topic, payload.level); break
-      case 'task': store.addTask(payload.name); break
-      case 'conceptWeak': store.recordConcept(payload.concept, 'weak'); break
-      case 'conceptMastered': store.recordConcept(payload.concept, 'mastered'); break
-      case 'review': store.addReview(payload.concept, payload.prompt, payload.result); break
-      case 'evidence': store.recordEvidence(payload.signal, payload.detail); break
+      case 'reset':
+        store.reset()
+        break
+      case 'profile':
+        store.updateProfile(payload)
+        break
+      case 'topic':
+        store.setTopic(payload.topic, payload.level)
+        break
+      case 'task':
+        store.addTask(payload.name)
+        break
+      case 'conceptWeak':
+        store.recordConcept(payload.concept, 'weak')
+        break
+      case 'conceptMastered':
+        store.recordConcept(payload.concept, 'mastered')
+        break
+      case 'review':
+        store.addReview(payload.concept, payload.prompt, payload.result)
+        break
+      case 'evidence':
+        store.recordEvidence(payload.signal, payload.detail)
+        break
       case 'spec': {
         const saved = store.addExerciseSpec(payload)
         specIds.push(saved.practice_state.exercise_specs.at(-1).id)
         break
       }
-      default: throw new Error(`unknown step ${step}`)
+      default:
+        throw new Error(`unknown step ${step}`)
     }
   }
   // Exercise the attempt path too: it touches review scheduling, concept
@@ -175,11 +205,9 @@ test('JS store is byte-identical to the Python store', { skip }, () => {
     runNode(jsFile)
     const jsText = readFileSync(jsFile, 'utf8')
 
-    const pyText = execFileSync(
-      'python3',
-      ['-c', pythonDriver(), pyFile, JSON.stringify(SCENARIO)],
-      { encoding: 'utf8' },
-    )
+    const pyText = execFileSync('python3', ['-c', pythonDriver(), pyFile, JSON.stringify(SCENARIO)], {
+      encoding: 'utf8',
+    })
     void pyText
 
     const pythonSide = JSON.parse(readFileSync(pyFile, 'utf8'))
@@ -187,7 +215,7 @@ test('JS store is byte-identical to the Python store', { skip }, () => {
 
     // Byte equality is the real contract; the structured diff below only makes
     // a failure readable instead of printing two large JSON blobs.
-    const normalize = value => JSON.stringify(value, Object.keys(value).sort(), 2)
+    const normalize = (value) => JSON.stringify(value, Object.keys(value).sort(), 2)
     assert.deepEqual(jsSide, pythonSide, 'JS and Python state diverged')
     assert.equal(jsSide.schema_version, SCHEMA_VERSION)
     assert.equal(
@@ -244,16 +272,19 @@ test('priority ranking breaks ties by code point, like the Python store', () => 
     assert.equal(ranked.length, concepts.length, 'every concept must survive ranking')
 
     // Precondition: the fixture only exercises the tie-break if everything ties.
-    const priorities = new Set(ranked.map(item => item.priority))
-    const dueDates = new Set(ranked.map(item => item.due_at))
+    const priorities = new Set(ranked.map((item) => item.priority))
+    const dueDates = new Set(ranked.map((item) => item.due_at))
     assert.equal(priorities.size, 1, `expected one shared priority, got ${[...priorities]}`)
     assert.equal(dueDates.size, 1, `expected one shared due date, got ${[...dueDates]}`)
 
-    const jsOrder = ranked.map(item => item.concept)
+    const jsOrder = ranked.map((item) => item.concept)
     assert.deepEqual(jsOrder, [...concepts].sort())
     // `localeCompare` would produce this instead — assert the regression directly
     // so the test still fails loudly if the comparator is ever reverted.
-    assert.notDeepEqual(jsOrder, [...concepts].sort((left, right) => left.localeCompare(right)))
+    assert.notDeepEqual(
+      jsOrder,
+      [...concepts].sort((left, right) => left.localeCompare(right)),
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -271,7 +302,7 @@ test('ranking order is identical to the Python store for tied items', { skip }, 
     store.reset()
     store.setTopic('tie-break')
     for (const concept of concepts) store.addReview(concept, `prompt ${concept}`, 'incorrect')
-    const jsOrder = store.priorityReviews(undefined, concepts.length).map(item => item.concept)
+    const jsOrder = store.priorityReviews(undefined, concepts.length).map((item) => item.concept)
 
     const script = `
 import json, sys
@@ -285,11 +316,11 @@ for concept in json.loads(sys.argv[2]):
     store.add_review(concept, 'prompt ' + concept, result='incorrect')
 print(json.dumps([item['concept'] for item in store.priority_reviews(limit=99)], ensure_ascii=False))
 `
-    const pyOrder = JSON.parse(execFileSync(
-      'python3',
-      ['-c', script, join(dir, 'py', 'state.json'), JSON.stringify(concepts)],
-      { encoding: 'utf8' },
-    ).trim())
+    const pyOrder = JSON.parse(
+      execFileSync('python3', ['-c', script, join(dir, 'py', 'state.json'), JSON.stringify(concepts)], {
+        encoding: 'utf8',
+      }).trim(),
+    )
 
     assert.deepEqual(jsOrder, pyOrder, 'tie-break order diverged from the Python store')
   } finally {

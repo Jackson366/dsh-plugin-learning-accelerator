@@ -97,7 +97,11 @@ test('every defaultState() top-level key is declared and required', () => {
   for (const key of defaults) {
     assert.ok(declared.includes(key), `schema.properties is missing the defaultState() key ${key}`)
   }
-  assert.deepEqual([...schema.required].sort(), [...defaults].sort(), 'required must be exactly the defaultState() keys')
+  assert.deepEqual(
+    [...schema.required].sort(),
+    [...defaults].sort(),
+    'required must be exactly the defaultState() keys',
+  )
   for (const key of schema.required) {
     assert.ok(declared.includes(key), `required lists ${key}, which is not declared in properties`)
   }
@@ -196,16 +200,20 @@ test('every field the kernel writes is documented by its definition', () => {
     store.recordConcept('Cordis waterfall 语义', 'weak')
     store.addTask('读完 cordis-tutorial 第七章', 'jump to chapter 7')
 
-    const spec = store.addExerciseSpec(createExerciseSpec({
-      topic: 'DSH Cordis 插件',
-      concepts: ['defineTool', 'tools.register'],
-      difficulty: 'normal',
-      task: '注册一个最小工具并在 Web UI 中调用',
-      goal: '理解工具注册即 effect',
-      expected_output: '工具卡片出现在对话流中',
-      evaluation_criteria: ['注册是 effect'],
-      hint: '从 ctx.tools.register 开始',
-    })).practice_state.exercise_specs.at(-1)
+    const spec = store
+      .addExerciseSpec(
+        createExerciseSpec({
+          topic: 'DSH Cordis 插件',
+          concepts: ['defineTool', 'tools.register'],
+          difficulty: 'normal',
+          task: '注册一个最小工具并在 Web UI 中调用',
+          goal: '理解工具注册即 effect',
+          expected_output: '工具卡片出现在对话流中',
+          evaluation_criteria: ['注册是 effect'],
+          hint: '从 ctx.tools.register 开始',
+        }),
+      )
+      .practice_state.exercise_specs.at(-1)
 
     store.recordAttempt(spec.id, {
       user_answer: 'ctx.tools.register(defineTool({...}))',
@@ -221,7 +229,11 @@ test('every field the kernel writes is documented by its definition', () => {
     assert.equal(due.length, 1, 'the scheduled attempt review should be due today')
     store.completeReview(due[0].id, { result: 'second_correct', notes: '第二次答对' })
 
-    store.recordExercise('注册 defineTool', { status: 'completed', concepts: ['defineTool'], notes: '跑通' })
+    store.recordExercise('注册 defineTool', {
+      status: 'completed',
+      concepts: ['defineTool'],
+      notes: '跑通',
+    })
     store.recordExercise('卸载 effect', { status: 'failed', concepts: ['defineTool'] })
     store.recordEvidence('explain_fuzzy', '把 effect 说成单例')
 
@@ -245,7 +257,14 @@ test('every field the kernel writes is documented by its definition', () => {
     // rename shows up as a readable failure rather than an empty record set.
     const progress = Object.values(state.topic_state.concept_progress)[0]
     assert.ok(progress, 'completing a review should have written concept_progress')
-    for (const field of ['strength', 'attempts', 'correct_streak', 'failure_count', 'next_due_at', 'last_reviewed_at']) {
+    for (const field of [
+      'strength',
+      'attempts',
+      'correct_streak',
+      'failure_count',
+      'next_due_at',
+      'last_reviewed_at',
+    ]) {
       assert.ok(field in progress, `written concept_progress lost ${field}`)
       assert.ok(field in schema.$defs.ConceptProgress.properties, `ConceptProgress does not declare ${field}`)
     }

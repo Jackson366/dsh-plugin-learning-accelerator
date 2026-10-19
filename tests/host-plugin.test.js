@@ -55,10 +55,7 @@ class ToolsMock extends Service {
 
   register(definition) {
     this.registered.set(definition.name, definition)
-    return this.ctx.effect(
-      () => () => this.registered.delete(definition.name),
-      `tools.register(${definition.name})`,
-    )
+    return this.ctx.effect(() => () => this.registered.delete(definition.name), `tools.register(${definition.name})`)
   }
 }
 
@@ -132,12 +129,12 @@ async function mountPlugin(config = {}) {
   // themselves are not visible until their own plugin bodies have run, so every
   // access is guarded.
   for (let attempt = 0; attempt < 100 && (ctx.tools?.registered.size ?? 0) < 5; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 10))
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
   assert.equal(ctx.tools?.registered.size, 5, 'plugin did not register its tools in time')
   // The route mounts on its own fiber, so it can land a tick after the tools.
   for (let attempt = 0; attempt < 100 && (ctx.webServer?.routes.length ?? 0) < 1; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 10))
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
   return {
     dir,
@@ -190,16 +187,16 @@ test('loads into Cordis, registers every tool, and contributes prompt context', 
   const harness = await mountPlugin()
   try {
     assert.equal(harness.fiber.state, FiberState.ACTIVE)
-    assert.deepEqual(
-      [...harness.tools.keys()].sort(),
-      ['learning_domain', 'learning_due', 'learning_record', 'learning_session', 'learning_status'],
-    )
+    assert.deepEqual([...harness.tools.keys()].sort(), [
+      'learning_domain',
+      'learning_due',
+      'learning_record',
+      'learning_session',
+      'learning_status',
+    ])
     assert.equal(harness.contexts.length, 2)
-    const byName = Object.fromEntries(harness.contexts.map(entry => [entry.name, entry]))
-    assert.deepEqual(
-      Object.keys(byName).sort(),
-      ['learning-accelerator/protocol', 'learning-accelerator/status'],
-    )
+    const byName = Object.fromEntries(harness.contexts.map((entry) => [entry.name, entry]))
+    assert.deepEqual(Object.keys(byName).sort(), ['learning-accelerator/protocol', 'learning-accelerator/status'])
     // The protocol sits one order above the state block: method before queue.
     assert.equal(byName['learning-accelerator/protocol'].order, 149)
     assert.equal(byName['learning-accelerator/status'].order, 150)
@@ -387,7 +384,12 @@ test('an unknown review id fails loudly instead of silently no-oping', async () 
   const harness = await mountPlugin()
   try {
     await assert.rejects(
-      () => run(harness, 'learning_record', { action: 'review_complete', review_id: 'nope', result: 'correct' }),
+      () =>
+        run(harness, 'learning_record', {
+          action: 'review_complete',
+          review_id: 'nope',
+          result: 'correct',
+        }),
       /review item not found/,
     )
   } finally {
@@ -418,9 +420,13 @@ test('read tools report malformed state instead of failing the turn', async () =
 test('prompt context stays silent until a learning state exists', async () => {
   const harness = await mountPlugin()
   try {
-    const [entry] = harness.contexts.filter(item => item.name === 'learning-accelerator/status')
+    const [entry] = harness.contexts.filter((item) => item.name === 'learning-accelerator/status')
     assert.equal(entry.text({ agent: { session: { header: { cwd: harness.dir } } } }), '')
-    await run(harness, 'learning_session', { domain: 'technology', learning_goal: '学 Cordis', current_topic: 'effect' })
+    await run(harness, 'learning_session', {
+      domain: 'technology',
+      learning_goal: '学 Cordis',
+      current_topic: 'effect',
+    })
     const injected = entry.text({ agent: { session: { header: { cwd: harness.dir } } } })
     assert.match(injected, /学习状态/)
     assert.match(injected, /学 Cordis/)
@@ -433,7 +439,7 @@ test('prompt context stays silent until a learning state exists', async () => {
 test('the teaching protocol is injected once a track exists, adapted to the profile', async () => {
   const harness = await mountPlugin()
   try {
-    const entry = harness.contexts.find(item => item.name === 'learning-accelerator/protocol')
+    const entry = harness.contexts.find((item) => item.name === 'learning-accelerator/protocol')
     assert.ok(entry, 'the protocol context was not registered')
     const read = () => entry.text({ agent: { session: { header: { cwd: harness.dir } } } })
 
@@ -504,9 +510,12 @@ test('the panel route follows the session directory through the real wiring', as
   // through `apply` and the route handler can see that.
   const harness = await mountPlugin()
   try {
-    await run(harness, 'learning_session', { learning_goal: '面板跟随会话', current_topic: 'wiring' })
+    await run(harness, 'learning_session', {
+      learning_goal: '面板跟随会话',
+      current_topic: 'wiring',
+    })
 
-    const route = harness.routes.find(entry => entry.path === '/learning-accelerator/panel')
+    const route = harness.routes.find((entry) => entry.path === '/learning-accelerator/panel')
     assert.ok(route, 'the panel route was not registered')
     const res = createResponse()
     route.handler({ headers: { host: '127.0.0.1:3080' }, method: 'GET' }, res)
@@ -529,7 +538,7 @@ test('an explicitly configured scope still pins the panel', async () => {
   // store must get it, rather than the session's project file.
   const harness = await mountPlugin({ scope: 'user' })
   try {
-    const route = harness.routes.find(entry => entry.path === '/learning-accelerator/panel')
+    const route = harness.routes.find((entry) => entry.path === '/learning-accelerator/panel')
     assert.ok(route, 'the panel route was not registered')
     const res = createResponse()
     route.handler({ headers: { host: '127.0.0.1:3080' }, method: 'GET' }, res)
@@ -578,10 +587,7 @@ test('learning_domain works with no state and no agent at all', async () => {
     }
     // An out-of-enum domain must be refused before `execute`, not silently
     // fall back to `general` — the model should pick a real domain.
-    await assert.rejects(
-      () => definition.execute({ domain: 'not-a-domain' }, execFor(harness.dir)),
-      /must be one of/,
-    )
+    await assert.rejects(() => definition.execute({ domain: 'not-a-domain' }, execFor(harness.dir)), /must be one of/)
     // The store-level fallback still exists for callers that bypass the tool.
     const template = LearningStore.domainTemplate('not-a-domain')
     assert.equal(template.domain, 'general')
@@ -593,7 +599,11 @@ test('learning_domain works with no state and no agent at all', async () => {
 test('panelPayload returns a serializable snapshot for the UI', async () => {
   const harness = await mountPlugin()
   try {
-    await run(harness, 'learning_session', { domain: 'language', learning_goal: '通过 N5', current_topic: '假名' })
+    await run(harness, 'learning_session', {
+      domain: 'language',
+      learning_goal: '通过 N5',
+      current_topic: '假名',
+    })
     const scheduled = await run(harness, 'learning_record', {
       action: 'review_add',
       concept: 'あ行',
@@ -621,7 +631,7 @@ test('panelPayload returns a serializable snapshot for the UI', async () => {
     const payload = panelPayload(createService({ root: harness.dir }), {})
     assert.equal(payload.ok, true)
     assert.equal(payload.due_reviews.length, 0)
-    assert.ok(payload.concept_progress.some(entry => entry.concept === 'あ行'))
+    assert.ok(payload.concept_progress.some((entry) => entry.concept === 'あ行'))
     assert.ok(payload.mastered_concepts.includes('あ行'))
     // Must survive the round trip to the browser.
     assert.deepEqual(JSON.parse(JSON.stringify(payload)), payload)
@@ -638,22 +648,31 @@ test('sessionCwd and resolveStatePath follow the documented precedence', () => {
   assert.equal(sessionCwd({ session: { header: { cwd: 'relative/path' } } }), undefined)
 
   assert.deepEqual(
-    resolveStatePath({ stateFile: '/tmp/explicit.json', agent: { session: { header: { cwd: '/tmp/x' } } } }),
+    resolveStatePath({
+      stateFile: '/tmp/explicit.json',
+      agent: { session: { header: { cwd: '/tmp/x' } } },
+    }),
     { path: '/tmp/explicit.json', scope: 'project', source: 'argument' },
   )
-  assert.deepEqual(
-    resolveStatePath({ agent: { session: { header: { cwd: '/tmp/x' } } }, root: '/tmp/ignored' }),
-    { path: '/tmp/x/.learning/state.json', scope: 'project', source: 'session-cwd' },
-  )
-  assert.deepEqual(
-    resolveStatePath({ root: '/tmp/root' }),
-    { path: '/tmp/root/.learning/state.json', scope: 'project', source: 'config-root' },
-  )
-  assert.deepEqual(
-    resolveStatePath({ fallback: '/tmp/fallback' }),
-    { path: '/tmp/fallback/.learning/state.json', scope: 'project', source: 'process-cwd' },
-  )
-  const user = resolveStatePath({ scope: 'user', agent: { session: { header: { cwd: '/tmp/x' } } } })
+  assert.deepEqual(resolveStatePath({ agent: { session: { header: { cwd: '/tmp/x' } } }, root: '/tmp/ignored' }), {
+    path: '/tmp/x/.learning/state.json',
+    scope: 'project',
+    source: 'session-cwd',
+  })
+  assert.deepEqual(resolveStatePath({ root: '/tmp/root' }), {
+    path: '/tmp/root/.learning/state.json',
+    scope: 'project',
+    source: 'config-root',
+  })
+  assert.deepEqual(resolveStatePath({ fallback: '/tmp/fallback' }), {
+    path: '/tmp/fallback/.learning/state.json',
+    scope: 'project',
+    source: 'process-cwd',
+  })
+  const user = resolveStatePath({
+    scope: 'user',
+    agent: { session: { header: { cwd: '/tmp/x' } } },
+  })
   assert.equal(user.scope, 'user')
   assert.equal(user.source, 'user-scope')
 })
@@ -684,7 +703,10 @@ test('injectPromptContext and injectProtocol are independent switches', async ()
   // State off, method on: a learner who wants the protocol but not the queue.
   const methodOnly = await mountPlugin({ injectPromptContext: false })
   try {
-    assert.deepEqual(methodOnly.contexts.map(entry => entry.name), ['learning-accelerator/protocol'])
+    assert.deepEqual(
+      methodOnly.contexts.map((entry) => entry.name),
+      ['learning-accelerator/protocol'],
+    )
   } finally {
     methodOnly.cleanup()
   }
@@ -832,7 +854,7 @@ test('the exercise action reaches recordExercise and emits a difficulty signal',
     assert.equal(state.difficulty_state.next_adjustment, 'same')
     // The signal really was appended.
     assert.deepEqual(
-      state.difficulty_state.evidence.map(entry => entry.signal),
+      state.difficulty_state.evidence.map((entry) => entry.signal),
       ['exercise_completed', 'exercise_failed', 'exercise_completed'],
     )
   } finally {
@@ -843,19 +865,17 @@ test('the exercise action reaches recordExercise and emits a difficulty signal',
 test('exercise requires a name and a legal status', async () => {
   const harness = await mountPlugin()
   try {
-    await assert.rejects(
-      () => run(harness, 'learning_record', { action: 'exercise' }),
-      /exercise requires task/,
-    )
+    await assert.rejects(() => run(harness, 'learning_record', { action: 'exercise' }), /exercise requires task/)
     // The harness validates declared parameters before `execute` runs, so an
     // illegal status never reaches the store's own guard. That is the stronger
     // guarantee, and it is what the model actually experiences.
     await assert.rejects(
-      () => run(harness, 'learning_record', {
-        action: 'exercise',
-        task: 'x',
-        exercise_status: 'maybe',
-      }),
+      () =>
+        run(harness, 'learning_record', {
+          action: 'exercise',
+          task: 'x',
+          exercise_status: 'maybe',
+        }),
       /"exercise_status" must be one of \["completed","failed"\]/,
     )
     const properties = harness.tools.get('learning_record').parameters.properties

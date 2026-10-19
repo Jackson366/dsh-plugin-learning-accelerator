@@ -28,11 +28,7 @@ const readFragment = (name) => readFileSync(join(SRC, name), 'utf8')
 test('lib/client.js is exactly what the fragments compose', () => {
   const expected = compose(readFragment, readFileSync(join(SRC, 'index.js'), 'utf8'))
   const actual = readFileSync(BUNDLE, 'utf8')
-  assert.equal(
-    actual,
-    expected,
-    'lib/client.js is stale — run `node scripts/build-client.mjs`',
-  )
+  assert.equal(actual, expected, 'lib/client.js is stale — run `node scripts/build-client.mjs`')
 })
 
 test('the template still has a splice point, so a rebuild cannot silently no-op', () => {

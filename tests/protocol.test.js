@@ -35,7 +35,10 @@ import {
 const UPSTREAM_MODES = ['onboarding', 'concept', 'project', 'practice', 'review', 'debug', 'calibration']
 
 test('the seven operating modes survive the port, in upstream order', () => {
-  assert.deepEqual(OPERATING_MODES.map(mode => mode.id), UPSTREAM_MODES)
+  assert.deepEqual(
+    OPERATING_MODES.map((mode) => mode.id),
+    UPSTREAM_MODES,
+  )
   for (const mode of OPERATING_MODES) {
     assert.ok(mode.label.length > 0, `${mode.id} lost its label`)
     assert.ok(mode.intent.length > 10, `${mode.id} lost its intent`)
@@ -44,8 +47,16 @@ test('the seven operating modes survive the port, in upstream order', () => {
 
 test('the teaching unit keeps upstream order, end to end', () => {
   assert.deepEqual(TEACHING_UNIT_SEQUENCE, [
-    '认知定位', '旧知识映射', '最小可运行示例', '语法与心智模型', '真实工程用法',
-    '最佳实践', '反模式与常见坑', '生态位', '渐进式回顾', '下一步',
+    '认知定位',
+    '旧知识映射',
+    '最小可运行示例',
+    '语法与心智模型',
+    '真实工程用法',
+    '最佳实践',
+    '反模式与常见坑',
+    '生态位',
+    '渐进式回顾',
+    '下一步',
   ])
   // Every unit step has to be reachable from the composed text, or the model
   // never sees the step it is supposed to execute.
@@ -55,13 +66,24 @@ test('the teaching unit keeps upstream order, end to end', () => {
   }
   // The loop mirrors upstream's own Core Workflow labels.
   const loop = CORE_LOOP.join('\n')
-  for (const step of ['认知定位', '旧知识映射', '最小可运行示例', '语法与心智模型', '任务驱动练习', '间隔重复', '状态更新']) {
+  for (const step of [
+    '认知定位',
+    '旧知识映射',
+    '最小可运行示例',
+    '语法与心智模型',
+    '任务驱动练习',
+    '间隔重复',
+    '状态更新',
+  ]) {
     assert.match(loop, new RegExp(step), `the loop lost ${step}`)
   }
 })
 
 test('exercise levels, per-turn outputs, and error analysis match upstream', () => {
-  assert.deepEqual(EXERCISE_LEVELS.map(level => level.id), ['easy', 'normal', 'stretch'])
+  assert.deepEqual(
+    EXERCISE_LEVELS.map((level) => level.id),
+    ['easy', 'normal', 'stretch'],
+  )
   assert.equal(PER_TURN_OUTPUTS.length, 4)
   assert.equal(ERROR_ANALYSIS_STEPS.length, 6)
   // Upstream's sixth step is the one that writes to the store.
@@ -71,7 +93,10 @@ test('exercise levels, per-turn outputs, and error analysis match upstream', () 
 test('difficulty is evidence-driven, with upstream signal names', () => {
   assert.deepEqual(DIFFICULTY_SIGNALS.positive, ['exercise_completed', 'recall_correct', 'explain_correct'])
   assert.deepEqual(DIFFICULTY_SIGNALS.negative, [
-    'exercise_failed', 'recall_incorrect', 'explain_fuzzy', 'setup_failed',
+    'exercise_failed',
+    'recall_incorrect',
+    'explain_fuzzy',
+    'setup_failed',
   ])
   const text = composeTeachingProtocol()
   assert.match(text, /只看证据|只按证据|不按自述信心/)
@@ -110,7 +135,10 @@ test('the frontend mapping table is never handed to an unknown learner', () => {
   assert.doesNotMatch(base, /一份菜谱/)
   assert.match(base, /不要默认对方懂前端/)
 
-  const frontend = composeTeachingProtocol({ experienceLevel: 'intermediate', knownSkills: ['React'] })
+  const frontend = composeTeachingProtocol({
+    experienceLevel: 'intermediate',
+    knownSkills: ['React'],
+  })
   for (const row of FRONTEND_ANALOGIES) {
     assert.match(frontend, new RegExp(row.concept.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     assert.match(frontend, new RegExp(row.boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
@@ -128,13 +156,25 @@ test('the domain note follows the state domain, and unknown domains fall back', 
   for (const [domain, note] of Object.entries(DOMAIN_TEACHING_NOTES)) {
     assert.match(composeTeachingProtocol({ domain }), new RegExp(note.slice(0, 6)))
   }
-  assert.match(composeTeachingProtocol({ domain: 'not-a-domain' }), new RegExp(DOMAIN_TEACHING_NOTES.general.slice(0, 6)))
+  assert.match(
+    composeTeachingProtocol({ domain: 'not-a-domain' }),
+    new RegExp(DOMAIN_TEACHING_NOTES.general.slice(0, 6)),
+  )
   assert.match(composeTeachingProtocol({}), new RegExp(DOMAIN_TEACHING_NOTES.general.slice(0, 6)))
 })
 
 test('the write path is named, and every action is reachable from the text', () => {
   const text = composeTeachingProtocol({ domain: 'technology' })
-  for (const action of ['review_complete', 'review_add', 'concept', 'exercise_spec', 'attempt', 'mistake', 'task', 'evidence']) {
+  for (const action of [
+    'review_complete',
+    'review_add',
+    'concept',
+    'exercise_spec',
+    'attempt',
+    'mistake',
+    'task',
+    'evidence',
+  ]) {
     assert.match(text, new RegExp(`\`${action}\``), `action ${action} is not mentioned`)
   }
   assert.match(text, /不要在正文里声称状态已保存/)
@@ -145,8 +185,12 @@ test('the write path is named, and every action is reachable from the text', () 
 
 test('composeTeachingProtocol is total and never leaks undefined', () => {
   const inputs = [
-    undefined, {}, { domain: null }, { experienceLevel: 42, knownSkills: 'React' },
-    { domain: 'TECHNOLOGY' }, { experienceLevel: 'no_programming', knownSkills: [] },
+    undefined,
+    {},
+    { domain: null },
+    { experienceLevel: 42, knownSkills: 'React' },
+    { domain: 'TECHNOLOGY' },
+    { experienceLevel: 'no_programming', knownSkills: [] },
   ]
   for (const input of inputs) {
     const text = composeTeachingProtocol(input)
@@ -159,9 +203,21 @@ test('composeTeachingProtocol is total and never leaks undefined', () => {
 })
 
 test('the injected block is bounded, so a live track is not taxed per turn', () => {
-  const worst = teachingProtocolBlock({ domain: 'technology', experienceLevel: 'intermediate', knownSkills: ['React'] })
+  const worst = teachingProtocolBlock({
+    domain: 'technology',
+    experienceLevel: 'intermediate',
+    knownSkills: ['React'],
+  })
   assert.match(worst, /^## 教学协议/)
   assert.ok(worst.length < 6000, `the protocol block grew to ${worst.length} characters`)
   // The state block is what tells the model *what* to do; this one tells it how.
-  assert.ok(worst.includes(composeTeachingProtocol({ domain: 'technology', experienceLevel: 'intermediate', knownSkills: ['React'] })))
+  assert.ok(
+    worst.includes(
+      composeTeachingProtocol({
+        domain: 'technology',
+        experienceLevel: 'intermediate',
+        knownSkills: ['React'],
+      }),
+    ),
+  )
 })
