@@ -124,14 +124,14 @@ async function mountPlugin(config = {}) {
   })
   const fiber = ctx.plugin(plugin, { root: dir, scope: 'project', ...config })
   // `ctx.plugin` activates asynchronously, and this plugin's registrations live
-  // behind a nested `ctx.inject` fiber. Wait for the observable result (all five
+  // behind a nested `ctx.inject` fiber. Wait for the observable result (all six
   // tools) instead of guessing a state or a sleep duration. The stub services
   // themselves are not visible until their own plugin bodies have run, so every
   // access is guarded.
-  for (let attempt = 0; attempt < 100 && (ctx.tools?.registered.size ?? 0) < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 100 && (ctx.tools?.registered.size ?? 0) < 6; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
-  assert.equal(ctx.tools?.registered.size, 5, 'plugin did not register its tools in time')
+  assert.equal(ctx.tools?.registered.size, 6, 'plugin did not register its tools in time')
   // The route mounts on its own fiber, so it can land a tick after the tools.
   for (let attempt = 0; attempt < 100 && (ctx.webServer?.routes.length ?? 0) < 1; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10))
