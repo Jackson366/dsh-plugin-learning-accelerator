@@ -140,6 +140,7 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 | `learning_due` | `on_date`（`YYYY-MM-DD`，默认**本地**今天）、`limit`（number，默认 5，可大于 5，`lib/tools/due.js`） |
 | `learning_session` | `domain`、`known_skills`（string[]）、`experience_level`、`learning_goal`、`target_outcome`、`current_topic`、`level`、`constraint`、`next_task`、`preferred_language`（`lib/tools/session.js`） |
 | `learning_domain` | 只有 `domain`（`lib/tools/domain.js`） |
+| `learning_audit` | `limit`（默认 20，最大 100），读取学习状态文件旁边的 `audit.jsonl`，不返回原始答案 |
 
 枚举也照抄，别凭记忆：
 
@@ -156,17 +157,17 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 `action` 是必填参数（`lib/tools/record.js`）。每个 action 的最小调用如下，参数名逐字对齐代码：
 
 ```jsonc
-// review_complete：完成一条到期项。review_id 必填，result 默认 correct
-{ "action": "review_complete", "review_id": "3f7c1a9b2d40", "result": "second_correct", "notes": "能说清 next() 的语义" }
+// review_complete：完成一条到期项。review_id、result 必填；只传本次观察结果，连续正确次数由内核计算
+{ "action": "review_complete", "review_id": "3f7c1a9b2d40", "result": "correct", "notes": "能说清 next() 的语义" }
 
-// review_add：新建一条复习项。concept 必填；prompt 默认 "Review <concept>"，result 默认 correct
+// review_add：创建待复习项。concept 必填；result 省略时默认 incorrect（立即到期），不是答对
 { "action": "review_add", "concept": "Cordis waterfall", "prompt": "不调用 next() 会发生什么", "result": "incorrect" }
 
-// concept：把概念放进 mastered / weak。concept 与 status 都必填
-{ "action": "concept", "concept": "effect 作用域", "status": "mastered" }
+// concept：模型只能标记 weak；mastered 必须通过有效复习结果推进
+{ "action": "concept", "concept": "effect 作用域", "status": "weak" }
 
 // exercise：记一次"做完/没做出来"的练习，不建 ExerciseSpec。task 是练习名（必填），
-// exercise_status 默认 completed；它会写 completed_exercises / failed_exercises 并发难度信号
+// exercise_status 必填；它会写 completed_exercises / failed_exercises 并发难度信号
 { "action": "exercise", "task": "注册一个最小工具", "exercise_status": "completed",
   "concepts": ["defineTool"], "notes": "跑通了" }
 
@@ -175,7 +176,7 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
   "task": "注册一个最小工具", "goal": "理解注册即 effect", "input": "const { defineTool } = require('...')",
   "evaluation_criteria": ["注册是 effect"] }
 
-// attempt：记录作答。exercise_id、attempt_result、整数 score 三者必填
+// attempt：记录作答。exercise_id、attempt_result、整数 score 必填，且需要 answer 或 evidence_ref
 { "action": "attempt", "exercise_id": "ab12cd34ef56", "answer": "ctx.tools.register(defineTool({...}))",
   "attempt_result": "pass", "score": 90, "concepts": ["defineTool"], "feedback": "正确" }
 
@@ -186,20 +187,21 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 // task：排一个下一步任务。task 必填
 { "action": "task", "task": "读完 cordis-tutorial 第七章", "notes": "重点看 inject" }
 
-// evidence：记一条原始难度信号。signal 必填
-{ "action": "evidence", "signal": "explain_correct", "detail": "能讲清 PENDING 的成因" }
+// evidence：记一条原始难度信号。signal 必填；正向信号还需要 evidence_ref 和 evaluation_reason
+{ "action": "evidence", "signal": "explain_correct", "detail": "能讲清 PENDING 的成因",
+  "evidence_ref": "answer-17", "evaluation_reason": "回答覆盖核心条件" }
 ```
 
 每个 action 的作用与边界：
 
 | action | 做了什么 | 关键细节 |
 |---|---|---|
-| `review_complete` | 归档到 `review_history`、按 `result` 重新调度、移动概念强弱、更新 `concept_progress`、追加难度证据（`lib/learning-store.js:528-560`）。返回被触碰的复习项、概念进度、难度。 | `review_id` 不存在时抛 `review item not found`，不静默成功（`tests/host-plugin.test.js:335-345`）。 |
+| `review_complete` | 归档到 `review_history`、按 `result` 重新调度、移动概念强弱、更新 `concept_progress`、追加难度证据（`lib/learning-store.js:528-560`）。返回被触碰的复习项、概念进度、难度。 | `review_id` 不存在、尚未到期或 result 越级时会拒绝；重复正确等级由内核根据历史计算（`tests/host-plugin.test.js:335-345`）。 |
 | `review_add` | 排一条新复习项，`source` 记为 `manual`（`lib/tools/record.js`）。 | 返回的 `review` 是按确定性 id 读回的同一行，不是猜的（`lib/tools/record.js`）。 |
-| `concept` | 只调 `recordConcept()`：进目标列表、从另一个列表移除（`lib/learning-store.js:498-512`）。 | 不动 strength，也不排复习。 |
+| `concept` | 只调 `recordConcept()`：进目标列表、从另一个列表移除（`lib/learning-store.js:498-512`）。 | 不动 strength，也不排复习；模型不能直接设置 mastered。 |
 | `exercise` | 调 `recordExercise()`：按名字 upsert 进 `completed_exercises` / `failed_exercises`，并发一条 `exercise_completed` / `exercise_failed` 难度信号（`lib/learning-store.js:636-662`）。 | 这是这两个列表**唯一**的写入口，也是这两个信号唯一的自动来源；不需要先建 ExerciseSpec。同名练习是更新，不是新增。 |
 | `exercise_spec` | 落一条 ExerciseSpec，id 由 `topic+concepts+difficulty+task` 决定（`lib/tools/record.js`）。 | `topic` 省略时取当前主题；`input` 是给学习者的起始材料（v0.2.1 起可写）；同样的参数重复提交是 upsert，不会堆积。 |
-| `attempt` | 写 AttemptRecord，并把相关概念排进复习、更新进度与难度证据（`lib/learning-store.js:656-700`）。 | `attempt_result` 是三值枚举，但落盘时 `partial` 折算成 `fail`，原始判断保留在返回值的 `attempt.outcome` 上（`lib/tools/record.js`）。 |
+| `attempt` | 写 AttemptRecord，并把相关概念排进复习、更新进度与难度证据（`lib/learning-store.js:656-700`）。 | `attempt_result` 的 `pass`、`partial`、`fail` 原样落盘；只有调度与难度计算将非 pass 视为需要补强。 |
 | `mistake` | 一次调用完成：记 `last_code_errors`、把概念标 weak、每个概念排一条复习、各追加一条 `explain_fuzzy` 证据（`lib/tools/record.js`）。 | 等价于四次独立写入，这是它存在的全部理由。 |
 | `task` | 往 `practice_state.current_tasks` 里 upsert，并同步 legacy 的 `current_project_tasks`（`lib/learning-store.js:470-487`）。 | 同名任务是更新，不是新增。 |
 | `evidence` | 追加一条难度证据（只保留最近 20 条）并按"连续两个同向信号移动一档"重算难度（`lib/learning-store.js:942-968`）。 | 信号只有七种，见下。 |
@@ -212,7 +214,7 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 难度钳在 1–5，且**只看观察到的证据，不看用户自述的信心**——这条在协议里是显式反模式
 （`lib/protocol.js:144-145,298`）。
 
-间隔（`lib/learning-store.js:39-45`）：
+间隔（`lib/learning-store.js:39-45`）：模型只提交本次 `correct` / `incorrect` / `fuzzy`，后续正确等级由持久化的 `correct_streak` 自动推导。
 
 | `result` | 间隔 | 副作用 |
 |---|---|---|
@@ -223,6 +225,16 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 
 读路径的排序权重是"到期 +20、薄弱 +30、`(1-strength)×20`、失败次数 ×3"，再按到期日与概念名**码点序**
 稳定排序（`lib/learning-store.js:612-634`）。`limit` / `due_limit` 默认 5 但可调大。
+
+---
+
+## 评估校验与审计（P0.1 / P0.2）
+
+`learning_record` 先验证字段、合法状态迁移与评分边界；通过后才写入学习状态。独立审计文件 `.learning/audit.jsonl` 按时间附加 `accepted` → `committed` / `failed` 事件。非法输入的验证错误在进入工具执行逻辑时写为 `rejected`；工具框架提前拒绝的参数不会产生审计事件。
+
+审计包含事件 ID、提交和校验结果、受影响概念的进度变化，以及可选 `request_id`、`evidence_ref`、`evaluation_reason`。它不复制原始学习答案。模型提供的证据引用 **未经独立真实性校验**；`request_id` 也只是关联信息，不是幂等键。可通过 `learning_audit` 查看最近事件。
+
+当前文件间写入不是数据库事务。进程在状态写入和最终审计追加之间退出，可能留下 `accepted` 未闭合事件；自动恢复与幂等属于后续 P0.3。
 
 ---
 

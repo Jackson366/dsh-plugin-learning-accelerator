@@ -19,7 +19,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 
 import { createService, panelPayload } from '../lib/index.js'
 import * as plugin from '../lib/index.js'
-import { LearningStore } from '../lib/learning-store.js'
+import { LearningStore, todayIso } from '../lib/learning-store.js'
 import { resolveStatePath, sessionCwd } from '../lib/scope.js'
 
 /**
@@ -124,14 +124,14 @@ async function mountPlugin(config = {}) {
   })
   const fiber = ctx.plugin(plugin, { root: dir, scope: 'project', ...config })
   // `ctx.plugin` activates asynchronously, and this plugin's registrations live
-  // behind a nested `ctx.inject` fiber. Wait for the observable result (all five
+  // behind a nested `ctx.inject` fiber. Wait for the observable result (all six
   // tools) instead of guessing a state or a sleep duration. The stub services
   // themselves are not visible until their own plugin bodies have run, so every
   // access is guarded.
-  for (let attempt = 0; attempt < 100 && (ctx.tools?.registered.size ?? 0) < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 100 && (ctx.tools?.registered.size ?? 0) < 6; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
-  assert.equal(ctx.tools?.registered.size, 5, 'plugin did not register its tools in time')
+  assert.equal(ctx.tools?.registered.size, 6, 'plugin did not register its tools in time')
   // The route mounts on its own fiber, so it can land a tick after the tools.
   for (let attempt = 0; attempt < 100 && (ctx.webServer?.routes.length ?? 0) < 1; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -188,6 +188,7 @@ test('loads into Cordis, registers every tool, and contributes prompt context', 
   try {
     assert.equal(harness.fiber.state, FiberState.ACTIVE)
     assert.deepEqual([...harness.tools.keys()].sort(), [
+      'learning_audit',
       'learning_domain',
       'learning_due',
       'learning_record',
@@ -279,19 +280,19 @@ test('learning_record closes the spaced-repetition loop', async () => {
     const completed = await run(harness, 'learning_record', {
       action: 'review_complete',
       review_id: due.items[0].id,
-      result: 'third_correct',
+      result: 'correct',
       notes: '能说清 short-circuit 与 next() 的区别',
     })
     assert.equal(completed.ok, true)
-    assert.equal(completed.review.result, 'third_correct')
-    // third_correct promotes to mastered, grows strength, and schedules 7 days out.
+    assert.equal(completed.review.result, 'correct')
+    // The first correct answer cannot promote to mastery and schedules one day out.
     assert.equal(completed.concept_progress.correct_streak, 1)
     assert.ok(completed.concept_progress.strength > 0.5)
 
     const after = await run(harness, 'learning_status', {})
     assert.equal(after.ok, true)
     assert.equal(after.summary.summary ? undefined : undefined, undefined)
-    assert.ok(completed.summary.summary.mastered_concepts.includes('Cordis waterfall'))
+    assert.ok(!completed.summary.summary.mastered_concepts.includes('Cordis waterfall'))
   } finally {
     harness.cleanup()
   }
@@ -353,7 +354,7 @@ test('learning_record records an attempt and moves difficulty', async () => {
     })
     assert.equal(partial.ok, true)
     assert.equal(partial.attempt.outcome, 'partial')
-    assert.equal(partial.attempt.result, 'fail')
+    assert.equal(partial.attempt.result, 'partial')
   } finally {
     harness.cleanup()
   }
@@ -626,13 +627,13 @@ test('panelPayload returns a serializable snapshot for the UI', async () => {
     await run(harness, 'learning_record', {
       action: 'review_complete',
       review_id: scheduled.review.id,
-      result: 'second_correct',
+      result: 'correct',
     })
     const payload = panelPayload(createService({ root: harness.dir }), {})
     assert.equal(payload.ok, true)
     assert.equal(payload.due_reviews.length, 0)
     assert.ok(payload.concept_progress.some((entry) => entry.concept === 'あ行'))
-    assert.ok(payload.mastered_concepts.includes('あ行'))
+    assert.ok(!payload.mastered_concepts.includes('あ行'))
     // Must survive the round trip to the browser.
     assert.deepEqual(JSON.parse(JSON.stringify(payload)), payload)
   } finally {
@@ -680,7 +681,7 @@ test('sessionCwd and resolveStatePath follow the documented precedence', () => {
 test('disposing the plugin unwinds tools and both prompt contexts', async () => {
   const harness = await mountPlugin()
   try {
-    assert.equal(harness.tools.size, 5)
+    assert.equal(harness.tools.size, 6)
     assert.equal(harness.contexts.length, 2)
     await harness.fiber.dispose()
     assert.equal(harness.tools.size, 0)
@@ -694,7 +695,7 @@ test('injectPromptContext and injectProtocol are independent switches', async ()
   // Neither block: the tools survive, the prompt stays untouched.
   const off = await mountPlugin({ injectPromptContext: false, injectProtocol: false })
   try {
-    assert.equal(off.tools.size, 5)
+    assert.equal(off.tools.size, 6)
     assert.equal(off.contexts.length, 0)
   } finally {
     off.cleanup()
@@ -893,7 +894,7 @@ test('the exercise action reaches recordExercise and emits a difficulty signal',
 test('exercise requires a name and a legal status', async () => {
   const harness = await mountPlugin()
   try {
-    await assert.rejects(() => run(harness, 'learning_record', { action: 'exercise' }), /exercise requires task/)
+    await assert.rejects(() => run(harness, 'learning_record', { action: 'exercise' }), /task is required/)
     // The harness validates declared parameters before `execute` runs, so an
     // illegal status never reaches the store's own guard. That is the stronger
     // guarantee, and it is what the model actually experiences.
@@ -912,4 +913,86 @@ test('exercise requires a name and a legal status', async () => {
   } finally {
     harness.cleanup()
   }
+})
+
+test('P0.1 rejects missing results, raw mastery, and contradictory attempts without altering state', async () => {
+  const harness = await mountPlugin()
+  try {
+    const added = await run(harness, 'learning_record', {
+      action: 'review_add', concept: 'TS generics', prompt: 'What is T?', result: 'incorrect',
+    })
+    const store = new LearningStore(join(harness.dir, '.learning', 'state.json'))
+    const before = store.load()
+    await assert.rejects(() => run(harness, 'learning_record', {
+      action: 'review_complete', review_id: added.review.id,
+    }), /requires result/)
+    await assert.rejects(() => run(harness, 'learning_record', {
+      action: 'review_complete', review_id: added.review.id, result: 'third_correct',
+    }), /must be one of/)
+    await assert.rejects(() => run(harness, 'learning_record', {
+      action: 'exercise', task: 'unfinished',
+    }), /requires exercise_status/)
+    await assert.rejects(() => run(harness, 'learning_record', {
+      action: 'concept', concept: 'TS generics', status: 'mastered',
+    }), /direct mastery promotion/)
+    assert.deepEqual(store.load(), before)
+    const audit = await run(harness, 'learning_audit', {})
+    assert.ok(audit.items.filter(x => x.status === 'rejected').length >= 3)
+  } finally { harness.cleanup() }
+})
+
+test('P0.1 derives second correct only after a completed first correct', async () => {
+  const harness = await mountPlugin()
+  try {
+    const added = await run(harness, 'learning_record', {
+      action: 'review_add', concept: 'TS generics', prompt: 'Explain extends', result: 'incorrect',
+    })
+    const first = await run(harness, 'learning_record', {
+      action: 'review_complete', review_id: added.review.id, result: 'correct',
+    })
+    assert.equal(first.review.result, 'correct')
+    assert.equal(first.concept_progress.correct_streak, 1)
+    await assert.rejects(() => run(harness, 'learning_record', {
+      action: 'review_complete', review_id: added.review.id, result: 'correct',
+    }), /not due/)
+    const store = new LearningStore(join(harness.dir, '.learning', 'state.json'))
+    const snapshot = store.load()
+    snapshot.review_state.next_review_items.find(x => x.id === added.review.id).due_at = todayIso()
+    store.save(snapshot)
+    const second = await run(harness, 'learning_record', {
+      action: 'review_complete', review_id: added.review.id, result: 'correct',
+    })
+    assert.equal(second.review.result, 'second_correct')
+    assert.equal(second.concept_progress.correct_streak, 2)
+    assert.ok(second.summary.summary.mastered_concepts.includes('TS generics'))
+  } finally { harness.cleanup() }
+})
+
+test('P0.2 audit logs evidence references and before/after deltas but never raw answers', async () => {
+  const harness = await mountPlugin()
+  try {
+    const spec = await run(harness, 'learning_record', {
+      action: 'exercise_spec', topic: 'TS', concepts: ['generics'],
+      difficulty: 'normal', task: 'Write generic',
+    })
+    const result = await run(harness, 'learning_record', {
+      action: 'attempt', exercise_id: spec.exercise.id,
+      answer: 'PRIVATE ANSWER MUST NOT APPEAR IN AUDIT',
+      attempt_result: 'partial', score: 58, concepts: ['generics'],
+      evidence_ref: 'test-run-112', evaluation_reason: 'Partial understanding',
+      request_id: 'model-run-42',
+    })
+    assert.equal(result.attempt.result, 'partial')
+    assert.equal(result.audit.status, 'committed')
+    const audit = await run(harness, 'learning_audit', { limit: 20 })
+    const entry = audit.items.find(x => x.event_id === result.audit.event_id && x.status === 'committed')
+    assert.ok(entry)
+    assert.equal(entry.evidence_ref, 'test-run-112')
+    assert.equal(entry.request_id, 'model-run-42')
+    assert.equal(entry.evidence_kind, 'model_reference_unverified')
+    assert.equal(entry.validated_result, 'partial')
+    assert.equal(entry.changes.after.attempts, entry.changes.before.attempts + 1)
+    assert.ok(!readFileSync(audit.path, 'utf8').includes('PRIVATE ANSWER MUST NOT APPEAR IN AUDIT'))
+    assert.equal(JSON.parse(readFileSync(result.path, 'utf8')).schema_version, 1)
+  } finally { harness.cleanup() }
 })
