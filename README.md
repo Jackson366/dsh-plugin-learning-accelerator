@@ -61,6 +61,9 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 
 ## Tools
 
+The optional read-only `learning_audit` tool exposes recent validation and mutation events. Model assessments must pass business rules before they update the learner. The model supplies an observed `correct`, `incorrect` or `fuzzy`; the plugin derives second/third correct from the saved streak. Raw learner answers are not copied into the audit trail.
+
+
 | Tool | Purpose |
 |---|---|
 | `learning_status` | Read the whole picture: profile, topic, mastered/weak concepts, due and priority reviews, tasks, difficulty. The entry point for any learning turn. |
@@ -68,8 +71,9 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 | `learning_session` | Onboarding and profile edits: domain, known skills, experience level, goal, target outcome, topic, constraints, next task. Returns the domain's onboarding questions **and the teaching protocol adapted to the profile it just saved**. |
 | `learning_record` | The single write path. Actions: `review_complete`, `review_add`, `concept`, `exercise`, `exercise_spec`, `attempt`, `mistake`, `task`, `evidence`. |
 | `learning_domain` | The static domain template (focus areas, practice types, review strategy, onboarding questions) plus that domain's teaching protocol, with no state required. |
+| `learning_audit` | Read recent accepted/committed/rejected/failed events from the independent `audit.jsonl` file beside `state.json`. |
 
-All five return a canonical JSON value, so [Code Mode](https://github.com/deepseek-ai/deepseek-harness)
+All six return a canonical JSON value, so [Code Mode](https://github.com/deepseek-ai/deepseek-harness)
 can call them as `await tools.learning_status({})` and program against fields rather than parsing prose.
 
 ## How a turn actually runs
@@ -80,7 +84,7 @@ can call them as `await tools.learning_status({})` and program against fields ra
 2. The model calls `learning_due` to get the ranked queue and asks the learner the top item's recall
    prompt — without leaking the answer.
 3. The learner answers. The model calls `learning_record` with `action: 'review_complete'` and
-   `result: 'correct' | 'second_correct' | 'third_correct' | 'incorrect' | 'fuzzy'`.
+   `result: 'correct' | 'incorrect' | 'fuzzy'`. The plugin calculates the repetition tier.
 4. That one call archives the review, moves the concept's strength and streak, promotes it to mastered
    (or back to weak), schedules the next interval, appends difficulty evidence, and may step the
    difficulty up or down. It returns that whole delta, which is the state update the model reports.
@@ -238,7 +242,7 @@ No test framework is installed: everything uses `node:test`. The suite covers
   not silently taxed every turn;
 - **state schema** — the JSON Schema must cover every field the kernel actually writes, driven by
   real store operations rather than a hand-written list;
-- **host plugin** — loading into a real Cordis `Context`, all five tools end to end, both
+- **host plugin** — loading into a real Cordis `Context`, all six tools end to end, both
   prompt-context contracts (gating, profile adaptation, independent switches), scope precedence, and
   disposal unwinding every registration;
 - **panel route** — the request guard (including the DNS-rebinding case), status codes, and the
@@ -253,6 +257,14 @@ No test framework is installed: everything uses `node:test`. The suite covers
 The store-equivalence test **skips** when `python3` or the Learning-Accelerator checkout is absent, so
 the package stays independently testable. CI clones the upstream repo next to this package precisely
 so that skip cannot happen there; see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+
+## P0.1 / P0.2: Evaluation validity and audit
+
+- `review_complete` requires an observed `correct`, `incorrect` or `fuzzy`, verifies a due item exists and is due, and calculates second/third correct using saved history. A first answer cannot claim third-correct mastery.
+- `exercise` requires an explicit `exercise_status`; `attempt` preserves `partial` in its stored history. Contradictory boundary scores are rejected and an answer or `evidence_ref` is required. Direct `concept: mastered` mutations are blocked (use assessed reviews).
+- Each `learning_record` action appends an `accepted` event **before** mutation and a `committed` or `failed` event afterwards. Rejected validation writes a `rejected` event. Query using `learning_audit`, or inspect `.learning/audit.jsonl` (for user scope: `~/.learning-accelerator/audit.jsonl`).
+- Audit events contain IDs, optional `request_id`, `evidence_ref`, rationale, and compact before/after state summaries, **not full learner answers**. `evidence_ref` is a model-provided reference and is **not independently verified**.
+- This is not yet P0.3: separate JSON and JSONL writes are not an atomic transaction. A crash may leave an `accepted` record without a terminal event. `request_id` is correlation metadata, **not idempotency**.
 
 ## Known limits
 
