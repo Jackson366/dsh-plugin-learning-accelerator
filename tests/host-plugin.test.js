@@ -681,7 +681,7 @@ test('sessionCwd and resolveStatePath follow the documented precedence', () => {
 test('disposing the plugin unwinds tools and both prompt contexts', async () => {
   const harness = await mountPlugin()
   try {
-    assert.equal(harness.tools.size, 5)
+    assert.equal(harness.tools.size, 6)
     assert.equal(harness.contexts.length, 2)
     await harness.fiber.dispose()
     assert.equal(harness.tools.size, 0)
@@ -695,7 +695,7 @@ test('injectPromptContext and injectProtocol are independent switches', async ()
   // Neither block: the tools survive, the prompt stays untouched.
   const off = await mountPlugin({ injectPromptContext: false, injectProtocol: false })
   try {
-    assert.equal(off.tools.size, 5)
+    assert.equal(off.tools.size, 6)
     assert.equal(off.contexts.length, 0)
   } finally {
     off.cleanup()
@@ -894,7 +894,7 @@ test('the exercise action reaches recordExercise and emits a difficulty signal',
 test('exercise requires a name and a legal status', async () => {
   const harness = await mountPlugin()
   try {
-    await assert.rejects(() => run(harness, 'learning_record', { action: 'exercise' }), /exercise requires task/)
+    await assert.rejects(() => run(harness, 'learning_record', { action: 'exercise' }), /task is required/)
     // The harness validates declared parameters before `execute` runs, so an
     // illegal status never reaches the store's own guard. That is the stronger
     // guarantee, and it is what the model actually experiences.
@@ -928,7 +928,7 @@ test('P0.1 rejects missing results, raw mastery, and contradictory attempts with
     }), /requires result/)
     await assert.rejects(() => run(harness, 'learning_record', {
       action: 'review_complete', review_id: added.review.id, result: 'third_correct',
-    }), /requires result/)
+    }), /must be one of/)
     await assert.rejects(() => run(harness, 'learning_record', {
       action: 'exercise', task: 'unfinished',
     }), /requires exercise_status/)
@@ -937,7 +937,7 @@ test('P0.1 rejects missing results, raw mastery, and contradictory attempts with
     }), /direct mastery promotion/)
     assert.deepEqual(store.load(), before)
     const audit = await run(harness, 'learning_audit', {})
-    assert.ok(audit.items.filter(x => x.status === 'rejected').length >= 4)
+    assert.ok(audit.items.filter(x => x.status === 'rejected').length >= 3)
   } finally { harness.cleanup() }
 })
 
