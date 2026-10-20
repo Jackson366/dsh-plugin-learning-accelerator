@@ -42,6 +42,23 @@ dsh plugin --profile desktop remove dsh-plugin-learning-accelerator
 
 ---
 
+## 快捷指令 `/learn`
+
+在组合了 `@deepseek-ai/dsh-commands` 的交互式 DSH 客户端中，插件可直接注册人类命令（并非模型工具）：
+
+| 命令 | 作用 |
+|---|---|
+| `/learn`、`/learn help` | 查看帮助 |
+| `/learn start TypeScript 泛型` | 创建/切换学习主题，不清空旧进度 |
+| `/learn status` | 查看当前主题、目标、难度、薄弱点和任务 |
+| `/learn review` | 查看优先级最高的前 5 条到期复习题 |
+| `/learn practice` | 查看已有练习题及下一步任务 |
+| `/learn mistakes` | 查看最近 5 条错误诊断 |
+
+命令不会调用模型，不会代替模型出题、教学或评分。作答评估和学习证据仍通过有校验及审计的 `learning_record` 工具写入；快捷命令的 `start` 只通过现有学习状态内核更新当前主题。
+
+`commands` 为**可选依赖**：无交互命令服务的 headless/ACP 组合不注册 `/learn`，但原有六个工具与提示词注入不受影响。某些 Web 客户端可能不会在斜杠自动补全中展示插件注册命令，此时可完整输入并提交。
+
 ## 配置
 
 七个键，全部定义在 `lib/index.js:50-70`，逐个列出：
@@ -117,7 +134,7 @@ cwd 时，都会盖过它。而 `stateFile` 是优先级链的第 1 档，会同
 
 ---
 
-## 五个工具
+## 六个工具
 
 | 工具 | 用途 |
 |---|---|
