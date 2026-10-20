@@ -76,6 +76,23 @@ The optional read-only `learning_audit` tool exposes recent validation and mutat
 All six return a canonical JSON value, so [Code Mode](https://github.com/deepseek-ai/deepseek-harness)
 can call them as `await tools.learning_status({})` and program against fields rather than parsing prose.
 
+## Human slash commands
+
+Interactive DSH clients that compose `@deepseek-ai/dsh-commands` expose one plugin-owned command, `/learn`:
+
+| Command | Behavior |
+|---|---|
+| `/learn help` (or `/learn`) | Show command help. |
+| `/learn start <topic>` | Create or switch the current topic; keep prior progress. |
+| `/learn status` | Show profile, weak concepts, pending reviews, tasks, and difficulty. |
+| `/learn review` | Show the top five due recall questions without claiming an assessment. |
+| `/learn practice` | Show saved practice specifications and next tasks. |
+| `/learn mistakes` | Show the last five recorded mistake diagnoses. |
+
+These are **direct human commands** registered through `ctx.commands.register`, not model tools or prompts. They make no model call and do not generate exercises, grade answers, or mutate assessment results. Use natural-language chat for teaching and assessment; `learning_record` remains the validated, audited path for those writes. `start` updates the learning topic like `learning_session` does.
+
+The command service is **optional**: in headless/ACP compositions without `commands`, the six model tools and prompt injection work unchanged. A client must support the DSH command registry to recognize `/learn`; some Web clients may execute a fully typed command without listing it in slash autocomplete.
+
 ## How a turn actually runs
 
 1. The session opens in a directory that has a `.learning/state.json`. The prompt context now carries
@@ -216,7 +233,7 @@ cordis.patch.yml        the bundle layer
 docs/                   analysis (why the design is what it is), teaching protocol, usage, architecture, extending
 schemas/                JSON Schema for .learning/state.json, aligned with the JS kernel
 examples/               the eight upstream examples, rewritten around this plugin's tools
-tests/                  106 tests across 8 files
+tests/                  112 tests across 9 files
 ```
 
 ## Tests
